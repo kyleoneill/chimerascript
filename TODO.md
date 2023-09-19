@@ -1,0 +1,7 @@
+- Need a config file
+    - Needs to specify the web address being pointed at
+    - Need to add config file info to README
+- Add support to pass a directory of test files
+- Variable data should be available across sections of a test
+    - `setup` variables should be accessible in `steps` and `teardown`
+    - `steps` variables should be accessible in `teardown`
