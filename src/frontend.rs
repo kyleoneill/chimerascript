@@ -1,4 +1,4 @@
-use yaml_rust::{Yaml, yaml};
+use yaml_rust::Yaml;
 use crate::err_handle::{ChimeraError, print_error};
 
 /// A TestCase consists of an optional expected_failure, a setup step which will run before the test,
@@ -28,12 +28,15 @@ impl TestCase {
 
                 // TODO: The below needs to be refactored, there _has_ to be a cleaner way to do this
 
+                // Get Yaml string versions of our test-case keys
                 let name_key = Yaml::from_str("case");
                 let expected_key = Yaml::from_str("expected-failure");
                 let setup_key = Yaml::from_str("setup");
                 let step_key = Yaml::from_str("steps");
                 let teardown_key = Yaml::from_str("teardown");
 
+                // Grab our test-case keys from the yaml. The case name and steps are mandatory, error if they are not present
+                // expected_failure, setup, and teardown are optional. Default to false and empty arrays if they aren't present
                 let name = if case.contains_key(&name_key) {case.get(&name_key).unwrap().as_str().unwrap().to_owned()} else {return Err(ChimeraError::ChimeraFileNoName)};
                 let expected_failure_yaml = if case.contains_key(&expected_key) {case.get(&expected_key).unwrap().as_bool()} else {None};
                 let expected_failure = if expected_failure_yaml.is_some() {expected_failure_yaml.unwrap()} else {false};
@@ -44,9 +47,9 @@ impl TestCase {
                 // Convert setup and teardown from Yaml::Array into Vec<TestLine>
                 // Convert steps from Yaml::Array into Vec<Operation>
                 // setup and teardown do not support sub-testing, so they can only contain test lines and no further tests
-                let setup = Operation::vec_to_line(Operation::operation_vec_from_yaml(setup_yaml)?)?;
-                let steps = Operation::operation_vec_from_yaml(steps_yaml)?;
-                let teardown = Operation::vec_to_line(Operation::operation_vec_from_yaml(teardown_yaml)?)?;
+                let setup = Some(TestLine::vec_from_yaml_array(setup_yaml)?);
+                let steps = Operation::vec_from_yaml_array(steps_yaml)?;
+                let teardown = Some(TestLine::vec_from_yaml_array(teardown_yaml)?);
 
                 Ok(TestCase {
                     name,
@@ -71,17 +74,22 @@ enum Operation {
 }
 
 impl Operation {
-    pub fn operation_vec_from_yaml(input: Yaml) -> Result<Vec<Self>, ChimeraError> {
+    /// Convert a Yaml::Array into a Vec<Operation>
+    pub fn vec_from_yaml_array(input: Yaml) -> Result<Vec<Self>, ChimeraError> {
         match input {
             Yaml::Array(yaml_arr) => {
                 let mut res: Vec<Self> = Vec::new();
+                // Iterate through the Yaml::Array elements
                 for yaml in yaml_arr.to_vec() {
                     match yaml {
+                        // If the element is a Yaml::Hash then it's a nested test-case
                         Yaml::Hash(nested_test_case) => {
                             let test_case = TestCase::from_yaml(Yaml::Hash(nested_test_case))?;
                             res.push(Operation::Test {test_case});
                         }
+                        // If the element is a Yaml::String then it's a test-case line
                         Yaml::String(yaml_line) => {
+                            // TODO: Parse this into whatever format this should be in that isn't text
                             let test_line = TestLine {line: yaml_line.as_str().to_owned()};
                             res.push(Operation::Line {test_line})
                         }
@@ -93,30 +101,43 @@ impl Operation {
             _ => return Err(ChimeraError::InvalidChimeraFile)
         }
     }
-
-    pub fn vec_to_line(input: Vec<Self>) -> Result<Option<Vec<TestLine>>, ChimeraError> {
-        if input.len() == 0 {
-            return Ok(None);
-        }
-        let mut res: Vec<TestLine> = Vec::new();
-        for item in input.into_iter() {
-            match item {
-                Operation::Test {test_case} => {
-                    return Err(ChimeraError::SubtestInSetupOrTeardown);
-                }
-                Operation::Line{test_line} => {
-                    res.push(test_line);
-                }
-            }
-        }
-        Ok(Some(res))
-    }
 }
 
 /// A TestLine is a line of ChimeraScript
 #[derive(Debug)]
 struct TestLine {
     line: String
+}
+
+impl TestLine {
+    /// Convert a Yaml::Array into a Vec<TestLine>
+    pub fn vec_from_yaml_array(input: Yaml) -> Result<Vec<Self>, ChimeraError> {
+        // TODO: There is a lot of overlap between this and the Operation method of the same name,
+        //       I should make this DRY
+        match input {
+            Yaml::Array(yaml_arr) => {
+                let mut res: Vec<Self> = Vec::new();
+                // Iterate through the Yaml::Array elements
+                for yaml in yaml_arr.to_vec() {
+                    match yaml {
+                        // If the element is a Yaml::Hash then it's a nested test-case
+                        Yaml::Hash(nested_test_case) => {
+                            return Err(ChimeraError::SubtestInSetupOrTeardown);
+                        }
+                        // If the element is a Yaml::String then it's a test-case line
+                        Yaml::String(yaml_line) => {
+                            // TODO: Parse this into whatever format this should be in that isn't text
+                            let test_line = TestLine {line: yaml_line.as_str().to_owned()};
+                            res.push(test_line)
+                        }
+                        _ => return Err(ChimeraError::InvalidChimeraFile)
+                    }
+                }
+                Ok(res)
+            }
+            _ => return Err(ChimeraError::InvalidChimeraFile)
+        }
+    }
 }
 
 pub fn iterate_yaml(yaml_doc: Yaml) -> Result<(i32, i32), ChimeraError> {
