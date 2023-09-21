@@ -1,0 +1,12 @@
+Statement = { AssignmentExpr | AssertCommand | PrintCommand | Expression }
+AssignmentExpr = { Str ~ "=" ~ Expression }
+Str = {  }
+Expression = { HttpCommand | "LITERAL" ~ Value }
+AssertCommand = { "ASSERT" ~ AssertSubCommand+ ~ Value ~ Str? } //Str? is an optional err msg
+AssertSubCommand = { "NOT" | "EQUALS" | "GTE" | "GT" | "LTE" | "LT" }
+PrintCommand = { "PRINT" ~ Value }
+HttpCommand = { HTTPVerb ~ Path ~ HttpArgs?}
+HTTPVerb = { "GET" | "PUT" | "POST" | "DELETE" }
+Path = {} // HTTP path, ? and & query params
+HttpArgs = {} //repeatable optional field args, repeatable optional key/value like timeout=>60
+Value = {  } // string | int | variable

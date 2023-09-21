@@ -8,7 +8,6 @@ use std::fs;
 use std::path::Path;
 use clap::Parser;
 use yaml_rust::YamlLoader;
-use crate::err_handle::ChimeraError;
 
 const FILE_EXTENSION: &'static str = "chs";
 
@@ -36,7 +35,7 @@ fn main() {
     // TODO: Handle being given a directory, iterate through files within it
 
     // TODO: When iterating through a directory, this should just pass on the iteration rather than err
-    // But it SHOULD error when being passed a single file
+    //       But it SHOULD error when being passed a single file
     let extension = path.extension();
     if extension.is_none() || extension.unwrap() != FILE_EXTENSION {
         print_error(&format!("{} has an invalid extension, expected it to be '.chs'", &args.path));
