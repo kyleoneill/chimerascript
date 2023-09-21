@@ -1,12 +1,33 @@
+// $ makes a match compound atomic match, it will not use implicit whitespace
+
 Statement = { AssignmentExpr | AssertCommand | PrintCommand | Expression }
-AssignmentExpr = { Str ~ "=" ~ Expression }
-Str = {  }
-Expression = { HttpCommand | "LITERAL" ~ Value }
-AssertCommand = { "ASSERT" ~ AssertSubCommand+ ~ Value ~ Str? } //Str? is an optional err msg
-AssertSubCommand = { "NOT" | "EQUALS" | "GTE" | "GT" | "LTE" | "LT" }
+
+AssignmentExpr = { "var" ~  Str ~ "=" ~ Expression }
+
+Expression = { HttpCommand | "LITERAL" ~ LiteralValue }
+
+AssertCommand = { "ASSERT" ~ AssertSubCommand+ ~ Value ~ QuoteString? } //Str? is an optional err msg
+
+AssertSubCommand = { "NOT" | "EQUALS" | "GTE" | "GT" | "LTE" | "LT" | "STATUS" }
+
 PrintCommand = { "PRINT" ~ Value }
+
 HttpCommand = { HTTPVerb ~ Path ~ HttpArgs?}
+
 HTTPVerb = { "GET" | "PUT" | "POST" | "DELETE" }
-Path = {} // HTTP path, ? and & query params
-HttpArgs = {} //repeatable optional field args, repeatable optional key/value like timeout=>60
-Value = {  } // string | int | variable
+
+Path = ${ ("/" ~ Str)+ ~ ("?" ~ HttpAssignment ~ ("&" ~ HttpAssignment)*)? } // HTTP path, ? and & query params
+
+HttpArgs = { HttpAssignment* ~ ( Str ~ "=>" ~ (ASCII_ALPHA+ | ASCII_DIGIT) ) } //repeatable optional field args, repeatable optional key/val like timeout=>60
+
+HttpAssignment = ${ Str ~ "=" ~ (ASCII_ALPHA+ | ASCII_DIGIT) }
+
+QuoteString = { "\"" ~ ASCII_ALPHA+ ~ "\"" }
+
+LiteralValue = { QuoteString | ASCII_DIGIT }
+
+VariableValue = ${ "(" ~ Str ~ ")" }
+
+Value = ${ LiteralValue | VariableValue }
+
+Str = { ASCII_ALPHA+ }
