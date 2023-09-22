@@ -14,7 +14,7 @@ pub struct CScriptTokenPairs;
 /// setup and teardown steps are a vec of TestLine but the main test, steps, is a vec of Operations
 /// as a test can contain a sub-test.
 #[derive(Debug)]
-struct TestCase {
+pub struct TestCase {
     name: String,
     expected_failure: bool,
     setup: Option<Vec<TestLine>>,
@@ -23,7 +23,7 @@ struct TestCase {
 }
 
 impl TestCase {
-    pub fn from_yaml(yaml: Yaml) -> Result<Self, ChimeraError> {
+    fn from_yaml(yaml: Yaml) -> Result<Self, ChimeraError> {
         match yaml {
             Yaml::Hash(mut case) => {
                 // the smallest possible test file needs at least 2 Yaml items, ex
@@ -189,22 +189,15 @@ fn handle_ast_err(e: pest::error::Error<Rule>) -> ChimeraError {
     // }
 }
 
-pub fn iterate_yaml(yaml_doc: Yaml) -> Result<(i32, i32), ChimeraError> {
-    // TODO: See comment in main.rs, iterate_yaml should _NOT_ be running the test, this file
-    //       should just be parsing a test struct out of the yaml
+pub fn iterate_yaml(yaml_doc: Yaml) -> Result<Vec<TestCase>, ChimeraError> {
     match yaml_doc {
         Yaml::Array(yaml_arr) => {
-            let mut passed_tests = 0;
-            let mut failed_tests = 0;
-            // yaml_arr here should be a list of TestCases
+            let mut ret: Vec<TestCase> = Vec::new();
             for yaml in yaml_arr {
-                // Try to parse `yaml` into a TestCase
                 let test_case = TestCase::from_yaml(yaml)?;
-                println!("{:?}\n", test_case);
-
-                // After we've parsed the tests, run them
+                ret.push(test_case);
             }
-            Ok((passed_tests, failed_tests))
+            Ok(ret)
         }
         _ => {
             Err(ChimeraError::InvalidChimeraFile("chs file should begin with a list of test cases but it did not.".to_owned()))
