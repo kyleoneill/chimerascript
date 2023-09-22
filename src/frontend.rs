@@ -1,4 +1,4 @@
-use pest::iterators::Pairs;
+use pest::error::InputLocation;
 use pest::Parser;
 use pest_derive::Parser;
 use yaml_rust::Yaml;
@@ -71,6 +71,12 @@ impl TestCase {
                 Err(ChimeraError::InvalidChimeraFile("A yaml TestCase must begin with a Yaml::Hash variant.".to_owned()))
             }
         }
+    }
+
+    /// Runs a test case
+    pub fn run_test_case(self) -> bool {
+        // Will need a hashmap in this method to track variables to be accessed in setup, steps, and teardown
+        todo!()
     }
 }
 
@@ -167,8 +173,11 @@ impl TestLine {
 }
 
 fn handle_ast_err(e: pest::error::Error<Rule>) -> ChimeraError {
-    println!("{:?}", e);
-    ChimeraError::FailedParseAST(format!("Failed to parse ChimeraScript line: {}", e.line()).to_owned())
+    let position = match e.location {
+        InputLocation::Pos(pos) => pos,
+        InputLocation::Span((start, _end)) => start
+    };
+    ChimeraError::FailedParseAST(format!("Failed to parse ChimeraScript at position {} of line: {}", position, e.line()).to_owned())
     // match e.variant {
     //     pest::error::ErrorVariant::ParsingError {
     //         positives,
