@@ -1,33 +1,41 @@
 // $ makes a match compound atomic match, it will not use implicit whitespace
 
+// Implicit whitespacing is not on by default, this enables it
+WHITESPACE = _{ " " }
+
 Statement = { AssignmentExpr | AssertCommand | PrintCommand | Expression }
 
 AssignmentExpr = { "var" ~ Str+ ~ "=" ~ Expression }
 
 Expression = { HttpCommand | "LITERAL" ~ LiteralValue }
 
+// This looks like `ASSERT EQUALS (my_var.foo) 5 "FailureMessage"`
 AssertCommand = { "ASSERT" ~ "NOT"? ~ AssertSubCommand ~ Value ~ Value ~ QuoteString? }
 
 AssertSubCommand = { "EQUALS" | "GTE" | "GT" | "LTE" | "LT" | "STATUS" }
 
 PrintCommand = { "PRINT" ~ Value }
 
+// e.g. PUT /foo?field=5 name="hello" timeout=>60
 HttpCommand = { HTTPVerb ~ Path ~ HttpAssignment* ~ KeyValuePair* }
 
 HTTPVerb = { "GET" | "PUT" | "POST" | "DELETE" }
 
-Path = ${ ("/" ~ Str+)+ ~ ("?" ~ HttpAssignment ~ ("&" ~ HttpAssignment)*)? } // HTTP path, ? and & query params
+// e.g. /foo/bar?thing=5&other=50&another=10
+Path = ${ ("/" ~ Str+)+ ~ ("?" ~ HttpAssignment ~ ("&" ~ HttpAssignment)*)? }
 
 KeyValuePair = { Str+ ~ "=>" ~ (ASCII_ALPHA+ | ASCII_DIGIT) } // repeatable optional key/val like timeout=>60
 
 HttpAssignment = ${ Str+ ~ "=" ~ (ASCII_ALPHA+ | ASCII_DIGIT) }
 
-QuoteString = { "\"" ~ ASCII_ALPHA+ ~ "\"" } // TODO: Will need to add variable support in here
+// TODO: Will need to add variable support in here
+QuoteString = { "\"" ~ ASCII_ALPHA+ ~ "\"" }
 
-LiteralValue = { QuoteString | ASCII_DIGIT }
+LiteralValue = { QuoteString | ASCII_DIGIT+ }
 
+// TODO: Need support for '.' for like (foo.field). Just add to Str?
 VariableValue = ${ "(" ~ Str+ ~ ")" }
 
 Value = ${ LiteralValue | VariableValue }
 
-Str = { ASCII_ALPHANUMERIC | "-" | "_" }
+Str = _{ ASCII_ALPHANUMERIC | "-" | "_" }

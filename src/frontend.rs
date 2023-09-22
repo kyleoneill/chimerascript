@@ -167,6 +167,7 @@ impl TestLine {
 }
 
 fn handle_ast_err(e: pest::error::Error<Rule>) -> ChimeraError {
+    println!("{:?}", e);
     ChimeraError::FailedParseAST(format!("Failed to parse ChimeraScript line: {}", e.line()).to_owned())
     // match e.variant {
     //     pest::error::ErrorVariant::ParsingError {
