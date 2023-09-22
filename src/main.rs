@@ -1,5 +1,6 @@
 mod err_handle;
 mod frontend;
+mod abstract_syntax_tree;
 
 use err_handle::print_error;
 
@@ -8,6 +9,7 @@ use std::fs;
 use std::path::Path;
 use clap::Parser;
 use yaml_rust::YamlLoader;
+use crate::err_handle::ChimeraError;
 
 const FILE_EXTENSION: &'static str = "chs";
 
@@ -57,9 +59,11 @@ fn main() {
                     let res = if test_result.1 == 0 {"PASSED"} else {"FAILED"};
                     println!("TEST {} WITH {} SUCCESSES AND {} FAILURES", res, test_result.0, test_result.1);
                 }
-                Err(f) => {
-                    // TODO: Need error handling here
-                    print_error("TODO: GIVE ME AN ERROR MSG");
+                Err(err) => {
+                    match err {
+                        ChimeraError::InvalidChimeraFile(msg) => print_error(&msg),
+                        ChimeraError::FailedParseAST(msg) => print_error(&msg)
+                    }
                 }
             }
         },

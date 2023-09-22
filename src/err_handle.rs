@@ -1,10 +1,7 @@
 #[derive(Debug)]
 pub enum ChimeraError {
-    FailedToParseFromYaml,
-    InvalidChimeraFile,
-    ChimeraFileNoName,
-    ChimeraFileNoSteps,
-    SubtestInSetupOrTeardown
+    InvalidChimeraFile(String),
+    FailedParseAST(String)
 }
 
 pub fn print_error(err_msg: &str) {
