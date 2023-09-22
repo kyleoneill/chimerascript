@@ -1,5 +1,13 @@
+use pest::iterators::Pairs;
+use pest::Parser;
+use pest_derive::Parser;
 use yaml_rust::Yaml;
-use crate::err_handle::{ChimeraError, print_error};
+use crate::err_handle::ChimeraError;
+use crate::abstract_syntax_tree::ChimeraScriptAST;
+
+#[derive(Parser, Debug)]
+#[grammar = "grammar.pest"]
+pub struct CScriptTokenPairs;
 
 /// A TestCase consists of an optional expected_failure, a setup step which will run before the test,
 /// a set of steps which make up a test, and a set of teardown steps which run after the test. The
@@ -23,7 +31,7 @@ impl TestCase {
                 //   steps:     <-- This is the second item
                 //     - ASSERT EQUALS 1 1 <-- This is under the second item
                 if case.len() < 2 {
-                    return Err(ChimeraError::InvalidChimeraFile)
+                    return Err(ChimeraError::InvalidChimeraFile("TestCase must have at least one case and its steps.".to_owned()))
                 }
 
                 // TODO: The below needs to be refactored, there _has_ to be a cleaner way to do this
@@ -37,11 +45,11 @@ impl TestCase {
 
                 // Grab our test-case keys from the yaml. The case name and steps are mandatory, error if they are not present
                 // expected_failure, setup, and teardown are optional. Default to false and empty arrays if they aren't present
-                let name = if case.contains_key(&name_key) {case.get(&name_key).unwrap().as_str().unwrap().to_owned()} else {return Err(ChimeraError::ChimeraFileNoName)};
+                let name = if case.contains_key(&name_key) {case.get(&name_key).unwrap().as_str().unwrap().to_owned()} else {return Err(ChimeraError::InvalidChimeraFile("TestCase must have a 'case' key which contains its name.".to_owned()))};
                 let expected_failure_yaml = if case.contains_key(&expected_key) {case.get(&expected_key).unwrap().as_bool()} else {None};
                 let expected_failure = if expected_failure_yaml.is_some() {expected_failure_yaml.unwrap()} else {false};
                 let setup_yaml = if case.contains_key(&setup_key) {case.remove(&setup_key).unwrap()} else {Yaml::Array(vec![])};
-                let steps_yaml = if case.contains_key(&step_key) {case.remove(&step_key).unwrap()} else {return Err(ChimeraError::ChimeraFileNoSteps)};
+                let steps_yaml = if case.contains_key(&step_key) {case.remove(&step_key).unwrap()} else {return Err(ChimeraError::InvalidChimeraFile("TestCase must have a 'steps' key which contains its steps.".to_owned()))};
                 let teardown_yaml = if case.contains_key(&teardown_key) {case.remove(&teardown_key).unwrap()} else {Yaml::Array(vec![])};
 
                 // Convert setup and teardown from Yaml::Array into Vec<TestLine>
@@ -60,7 +68,7 @@ impl TestCase {
                 })
             }
             _ => {
-                Err(ChimeraError::InvalidChimeraFile)
+                Err(ChimeraError::InvalidChimeraFile("A yaml TestCase must begin with a Yaml::Hash variant.".to_owned()))
             }
         }
     }
@@ -89,16 +97,25 @@ impl Operation {
                         }
                         // If the element is a Yaml::String then it's a test-case line
                         Yaml::String(yaml_line) => {
-                            // TODO: Parse this into whatever format this should be in that isn't text
-                            let test_line = TestLine {line: yaml_line.as_str().to_owned()};
-                            res.push(Operation::Line {test_line})
+                            let stringified_line = yaml_line.as_str();
+                            let parsed = CScriptTokenPairs::parse(Rule::Statement, stringified_line);
+                            match parsed {
+                                Ok(parsed_line) => {
+                                    let ast = ChimeraScriptAST::from_pairs(parsed_line)?;
+                                    let test_line = TestLine { line: ast };
+                                    res.push(Operation::Line { test_line });
+                                }
+                                Err(e) => {
+                                    return Err(handle_ast_err(e));
+                                }
+                            }
                         }
-                        _ => return Err(ChimeraError::InvalidChimeraFile)
+                        _ => return Err(ChimeraError::InvalidChimeraFile("A test case line must contain either a string to parse into ChimeraScript or a nested TestCase, but got neither.".to_owned()))
                     }
                 }
                 Ok(res)
             }
-            _ => return Err(ChimeraError::InvalidChimeraFile)
+            _ => return Err(ChimeraError::InvalidChimeraFile("Cannot convert a Yaml to a vec unless it's a Yaml::Array variant.".to_owned()))
         }
     }
 }
@@ -106,7 +123,7 @@ impl Operation {
 /// A TestLine is a line of ChimeraScript
 #[derive(Debug)]
 struct TestLine {
-    line: String
+    line: ChimeraScriptAST
 }
 
 impl TestLine {
@@ -121,23 +138,45 @@ impl TestLine {
                 for yaml in yaml_arr.to_vec() {
                     match yaml {
                         // If the element is a Yaml::Hash then it's a nested test-case
-                        Yaml::Hash(nested_test_case) => {
-                            return Err(ChimeraError::SubtestInSetupOrTeardown);
+                        Yaml::Hash(_nested_test_case) => {
+                            return Err(ChimeraError::InvalidChimeraFile("Setup and teardown sections cannot contain a nested sub-case.".to_owned()));
                         }
                         // If the element is a Yaml::String then it's a test-case line
                         Yaml::String(yaml_line) => {
-                            // TODO: Parse this into whatever format this should be in that isn't text
-                            let test_line = TestLine {line: yaml_line.as_str().to_owned()};
-                            res.push(test_line)
+                            let stringified_line = yaml_line.as_str();
+                            let parsed = CScriptTokenPairs::parse(Rule::Statement, stringified_line);
+                            match parsed {
+                                Ok(parsed_line) => {
+                                    let ast = ChimeraScriptAST::from_pairs(parsed_line)?;
+                                    let test_line = TestLine { line: ast };
+                                    res.push(test_line);
+                                }
+                                Err(e) => {
+                                    return Err(handle_ast_err(e))
+                                }
+                            }
                         }
-                        _ => return Err(ChimeraError::InvalidChimeraFile)
+                        _ => return Err(ChimeraError::InvalidChimeraFile("A test case setup or teardown line can only contain a string to parse into ChimeraScript, but got something else.".to_owned()))
                     }
                 }
                 Ok(res)
             }
-            _ => return Err(ChimeraError::InvalidChimeraFile)
+            _ => return Err(ChimeraError::InvalidChimeraFile("Cannot convert a Yaml to a vec unless it's a Yaml::Array variant.".to_owned()))
         }
     }
+}
+
+fn handle_ast_err(e: pest::error::Error<Rule>) -> ChimeraError {
+    ChimeraError::FailedParseAST(format!("Failed to parse ChimeraScript line: {}", e.line()).to_owned())
+    // match e.variant {
+    //     pest::error::ErrorVariant::ParsingError {
+    //         positives,
+    //         negatives
+    //     } => {
+    //         ChimeraError::FailedParseAST("".to_owned())
+    //     }
+    //     _ => ChimeraError::FailedParseAST("UNHANDLED CUSTOM ERR MSG".to_owned())
+    // }
 }
 
 pub fn iterate_yaml(yaml_doc: Yaml) -> Result<(i32, i32), ChimeraError> {
@@ -158,8 +197,7 @@ pub fn iterate_yaml(yaml_doc: Yaml) -> Result<(i32, i32), ChimeraError> {
             Ok((passed_tests, failed_tests))
         }
         _ => {
-            print_error("chs YML file should begin with a list of test cases but it did not.");
-            Err(ChimeraError::InvalidChimeraFile)
+            Err(ChimeraError::InvalidChimeraFile("chs file should begin with a list of test cases but it did not.".to_owned()))
         }
     }
 }

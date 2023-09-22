@@ -2,32 +2,32 @@
 
 Statement = { AssignmentExpr | AssertCommand | PrintCommand | Expression }
 
-AssignmentExpr = { "var" ~  Str ~ "=" ~ Expression }
+AssignmentExpr = { "var" ~ Str+ ~ "=" ~ Expression }
 
 Expression = { HttpCommand | "LITERAL" ~ LiteralValue }
 
-AssertCommand = { "ASSERT" ~ AssertSubCommand+ ~ Value ~ QuoteString? } //Str? is an optional err msg
+AssertCommand = { "ASSERT" ~ "NOT"? ~ AssertSubCommand ~ Value ~ Value ~ QuoteString? }
 
-AssertSubCommand = { "NOT" | "EQUALS" | "GTE" | "GT" | "LTE" | "LT" | "STATUS" }
+AssertSubCommand = { "EQUALS" | "GTE" | "GT" | "LTE" | "LT" | "STATUS" }
 
 PrintCommand = { "PRINT" ~ Value }
 
-HttpCommand = { HTTPVerb ~ Path ~ HttpArgs?}
+HttpCommand = { HTTPVerb ~ Path ~ HttpAssignment* ~ KeyValuePair* }
 
 HTTPVerb = { "GET" | "PUT" | "POST" | "DELETE" }
 
-Path = ${ ("/" ~ Str)+ ~ ("?" ~ HttpAssignment ~ ("&" ~ HttpAssignment)*)? } // HTTP path, ? and & query params
+Path = ${ ("/" ~ Str+)+ ~ ("?" ~ HttpAssignment ~ ("&" ~ HttpAssignment)*)? } // HTTP path, ? and & query params
 
-HttpArgs = { HttpAssignment* ~ ( Str ~ "=>" ~ (ASCII_ALPHA+ | ASCII_DIGIT) ) } //repeatable optional field args, repeatable optional key/val like timeout=>60
+KeyValuePair = { Str+ ~ "=>" ~ (ASCII_ALPHA+ | ASCII_DIGIT) } // repeatable optional key/val like timeout=>60
 
-HttpAssignment = ${ Str ~ "=" ~ (ASCII_ALPHA+ | ASCII_DIGIT) }
+HttpAssignment = ${ Str+ ~ "=" ~ (ASCII_ALPHA+ | ASCII_DIGIT) }
 
-QuoteString = { "\"" ~ ASCII_ALPHA+ ~ "\"" }
+QuoteString = { "\"" ~ ASCII_ALPHA+ ~ "\"" } // TODO: Will need to add variable support in here
 
 LiteralValue = { QuoteString | ASCII_DIGIT }
 
-VariableValue = ${ "(" ~ Str ~ ")" }
+VariableValue = ${ "(" ~ Str+ ~ ")" }
 
 Value = ${ LiteralValue | VariableValue }
 
-Str = { ASCII_ALPHA+ }
+Str = { ASCII_ALPHANUMERIC | "-" | "_" }
