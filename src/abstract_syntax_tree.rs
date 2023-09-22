@@ -11,7 +11,7 @@ impl ChimeraScriptAST {
     /// Convert
     pub fn from_pairs(pairs: Pairs<Rule>) -> Result<Self, ChimeraError> {
         println!("{:?}", pairs);
-        Err(ChimeraError::FailedParseAST("Failed AST".to_owned()))
+        Err(ChimeraError::FailedParseAST("Failed to convert pest tokens to an AST.".to_owned()))
     }
 }
 

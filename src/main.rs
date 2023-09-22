@@ -53,11 +53,18 @@ fn main() {
     let test_file = YamlLoader::load_from_str(&file_contents);
     match test_file {
         Ok(mut file_yaml) => {
-            // TODO: iterate_yaml should just be parsing the yaml, _NOT_ running the test
             match frontend::iterate_yaml(file_yaml.remove(0)) {
-                Ok(test_result) => {
-                    let res = if test_result.1 == 0 {"PASSED"} else {"FAILED"};
-                    println!("TEST {} WITH {} SUCCESSES AND {} FAILURES", res, test_result.0, test_result.1);
+                Ok(tests) => {
+                    let mut tests_passed = 0;
+                    let mut tests_failed = 0;
+                    for test in tests {
+                        match test.run_test_case() {
+                            true => tests_passed += 1,
+                            false => tests_failed += 1
+                        }
+                    }
+                    let overall_result = if tests_failed == 0 {"PASSED"} else {"FAILED"};
+                    println!("TEST {} WITH {} SUCCESSES AND {} FAILURES", overall_result, tests_passed, tests_failed);
                 }
                 Err(err) => {
                     match err {
