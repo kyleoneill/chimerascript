@@ -5,7 +5,7 @@ WHITESPACE = _{ " " }
 
 Statement = { AssignmentExpr | AssertCommand | PrintCommand | Expression }
 
-AssignmentExpr = { "var" ~ Str+ ~ "=" ~ Expression }
+AssignmentExpr = { "var" ~ VariableNameAssignment ~ "=" ~ Expression }
 
 Expression = { HttpCommand | "LITERAL" ~ LiteralValue }
 
@@ -24,19 +24,28 @@ HttpCommand = { HTTPVerb ~ Path ~ HttpAssignment* ~ KeyValuePair* }
 HTTPVerb = { "GET" | "PUT" | "POST" | "DELETE" }
 
 // e.g. /foo/bar?thing=5&other=50&another=10
-Path = ${ ("/" ~ Str+)+ ~ ("?" ~ HttpAssignment ~ ("&" ~ HttpAssignment)*)? }
+Path = ${ ("/" ~ Str+)+ ~ BeginPathArgs? }
+BeginPathArgs = ${ "?" ~ HttpAssignment ~ AdditionalPathArgs* }
+AdditionalPathArgs = ${ "&" ~ HttpAssignment }
 
-KeyValuePair = { Str+ ~ "=>" ~ (ASCII_ALPHA+ | ASCII_DIGIT) } // repeatable optional key/val like timeout=>60
+KeyValuePair = ${ VariableNameAssignment ~ "=>" ~ Value } // repeatable optional key/val like timeout=>60
 
-HttpAssignment = ${ Str+ ~ "=" ~ (ASCII_ALPHA+ | ASCII_DIGIT) }
+HttpAssignment = ${ VariableNameAssignment ~ "=" ~ Value }
 
 // TODO: Will need to add variable support in here
 QuoteString = { "\"" ~ ASCII_ALPHA+ ~ "\"" }
 
 LiteralValue = { QuoteString | ASCII_DIGIT+ | "true" | "false" }
 
-VariableValue = ${ "(" ~ Str+ ~ ")" }
+VariableValue = ${ "(" ~ NestedVariable+ ~ ")" }
 
 Value = ${ LiteralValue | VariableValue }
 
-Str = _{ ASCII_ALPHANUMERIC | "-" | "_" | "." }
+VariableNameAssignment = { Str+ }
+
+Str = _{ ASCII_ALPHANUMERIC | "-" | "_" }
+
+NestedVariable = _{ Str | "." }
+
+// Text with multiple variables?
+// STRING = { "\"" ~ (TEXT ~ "(" ~ IDENT ~ ")")* ~ TEXT ~ "\"" }
