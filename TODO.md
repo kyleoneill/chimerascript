@@ -6,3 +6,6 @@
     - `setup` variables should be accessible in `steps` and `teardown`
     - `steps` variables should be accessible in `teardown`
 - Testing
+- Ability to send Http requests to full paths so requests can go to endpoints
+  other than just the one specified in config
+- Support for comments
