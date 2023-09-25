@@ -69,7 +69,7 @@ fn main() {
                 Err(err) => {
                     match err {
                         ChimeraError::InvalidChimeraFile(msg) => print_error(&msg),
-                        ChimeraError::FailedParseAST(msg) => print_error(&msg)
+                        ChimeraError::FailedParseAST(msg) => print_error(&format!("Failed to parse tokens into AST, {}", &msg))
                     }
                 }
             }

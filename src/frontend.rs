@@ -55,16 +55,16 @@ impl TestCase {
                 // Convert setup and teardown from Yaml::Array into Vec<TestLine>
                 // Convert steps from Yaml::Array into Vec<Operation>
                 // setup and teardown do not support sub-testing, so they can only contain test lines and no further tests
-                let setup = Some(TestLine::vec_from_yaml_array(setup_yaml)?);
+                let setup_vec = TestLine::vec_from_yaml_array(setup_yaml)?;
                 let steps = Operation::vec_from_yaml_array(steps_yaml)?;
-                let teardown = Some(TestLine::vec_from_yaml_array(teardown_yaml)?);
+                let teardown_vec = TestLine::vec_from_yaml_array(teardown_yaml)?;
 
                 Ok(TestCase {
                     name,
                     expected_failure,
-                    setup,
+                    setup: if setup_vec.len() > 0 {Some(setup_vec)} else {None},
                     steps,
-                    teardown
+                    teardown: if teardown_vec.len() > 0 {Some(teardown_vec)} else {None}
                 })
             }
             _ => {
@@ -75,6 +75,7 @@ impl TestCase {
 
     /// Runs a test case
     pub fn run_test_case(self) -> bool {
+        println!("{:#?}", self);
         // Will need a hashmap in this method to track variables to be accessed in setup, steps, and teardown
         todo!()
     }

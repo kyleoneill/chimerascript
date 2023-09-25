@@ -10,7 +10,9 @@ AssignmentExpr = { "var" ~ Str+ ~ "=" ~ Expression }
 Expression = { HttpCommand | "LITERAL" ~ LiteralValue }
 
 // This looks like `ASSERT EQUALS (my_var.foo) 5 "FailureMessage"`
-AssertCommand = { "ASSERT" ~ "NOT"? ~ AssertSubCommand ~ Value ~ Value ~ QuoteString? }
+AssertCommand = { "ASSERT" ~ Negation? ~ AssertSubCommand ~ Value ~ Value ~ QuoteString? }
+
+Negation = { "NOT" }
 
 AssertSubCommand = { "EQUALS" | "GTE" | "GT" | "LTE" | "LT" | "STATUS" }
 
@@ -31,11 +33,10 @@ HttpAssignment = ${ Str+ ~ "=" ~ (ASCII_ALPHA+ | ASCII_DIGIT) }
 // TODO: Will need to add variable support in here
 QuoteString = { "\"" ~ ASCII_ALPHA+ ~ "\"" }
 
-LiteralValue = { QuoteString | ASCII_DIGIT+ }
+LiteralValue = { QuoteString | ASCII_DIGIT+ | "true" | "false" }
 
-// TODO: Need support for '.' for like (foo.field). Just add to Str?
 VariableValue = ${ "(" ~ Str+ ~ ")" }
 
 Value = ${ LiteralValue | VariableValue }
 
-Str = _{ ASCII_ALPHANUMERIC | "-" | "_" }
+Str = _{ ASCII_ALPHANUMERIC | "-" | "_" | "." }
