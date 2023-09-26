@@ -196,8 +196,6 @@ impl ChimeraScriptAST {
                 while http_pairs.peek().is_some() && http_pairs.peek().unwrap().as_rule() == Rule::HttpAssignment {
                     let mut http_assignment_pairs = http_pairs.next().unwrap().into_inner();
 
-                    println!("{:#?}", http_assignment_pairs);
-
                     let assignment_token = http_assignment_pairs.next().ok_or_else(|| return FailedParseAST("failed to get another token when looking for a VariableNameAssignment when parsing an HttpAssignment".to_owned()))?;
                     if assignment_token.as_rule() != Rule::VariableNameAssignment {return Err(FailedParseAST("failed to get a VariableNameAssignment when parsing an HttpAssignment".to_owned()))}
                     let lhs = assignment_token.as_str().to_owned();
