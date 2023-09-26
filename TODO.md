@@ -5,7 +5,7 @@
 - Variable data should be available across sections of a test
     - `setup` variables should be accessible in `steps` and `teardown`
     - `steps` variables should be accessible in `teardown`
-- Testing
+- Testing (unit tests, etc)
 - Ability to send Http requests to full paths so requests can go to endpoints
   other than just the one specified in config
 - Support for comments

@@ -212,7 +212,6 @@ impl ChimeraScriptAST {
                     http_assignments.push(http_assignment);
                 }
 
-                // TODO: WHY IS THIS STILL NOT WORKING?
                 // Peek ahead and iterate over the next pairs to get all of the KeyValuePair ones
                 let mut key_val_pairs: Vec<KeyValuePair> = Vec::new();
                 while http_pairs.peek().is_some() && http_pairs.peek().unwrap().as_rule() == Rule::KeyValuePair {
