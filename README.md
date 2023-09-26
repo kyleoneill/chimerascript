@@ -1,5 +1,5 @@
 # ChimeraScript
-ChimeraScript domain specific language used to write tests for HTTP
+ChimeraScript is a domain specific language used to write tests for HTTP
 services. ChimeraScript makes it simple to quickly design tests that
 can be run against a deployed web server.
 
