@@ -5,7 +5,10 @@
 - Variable data should be available across sections of a test
     - `setup` variables should be accessible in `steps` and `teardown`
     - `steps` variables should be accessible in `teardown`
-- Testing (unit tests, etc)
+- Testing
+  - frontend
+  - Actual behavior (once that feature is done)
+    - Move tests from AST to here? Just copy tests?
 - Ability to send Http requests to full paths so requests can go to endpoints
   other than just the one specified in config
 - Support for comments

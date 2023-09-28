@@ -54,7 +54,7 @@ impl ChimeraScriptAST {
                 let next_subcommand = pairs.next().ok_or_else(|| FailedParseAST("ran out of tokens when getting assertion subcommand".to_owned()))?;
                 if next_subcommand.as_rule() != Rule::AssertSubCommand {return Err(FailedParseAST("Rule::AssertCommand inner tokens missing a Rule::AssertSubcommand".to_owned()))}
                 let subcommand = match next_subcommand.as_span().as_str() {
-                    "EQUALS" => AssertSubCommand::Equals,
+                    "EQUALS" => AssertSubCommand::EQUALS,
                     "GTE" => AssertSubCommand::GTE,
                     "GT" => AssertSubCommand::GT,
                     "LTE" => AssertSubCommand::LTE,
@@ -269,15 +269,24 @@ struct AssertCommand {
     error_message: Option<String>
 }
 
-#[derive(Debug)]
+impl From<Statement> for AssertCommand {
+    fn from(value: Statement) -> Self {
+        match value {
+            Statement::AssertCommand(assert_cmd) => assert_cmd,
+            _ => panic!("tried to use a Statement as an AssertCommand when it was not one")
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
 enum Value {
     Literal(Literal),
     Variable(String)
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum AssertSubCommand {
-    Equals,
+    EQUALS,
     GTE,
     GT,
     LTE,
@@ -293,6 +302,18 @@ struct HttpCommand {
     key_val_pairs: Vec<KeyValuePair>
 }
 
+impl From<Statement> for HttpCommand {
+    fn from(value: Statement) -> Self {
+        match value {
+            Statement::Expression(expr) => match expr {
+                Expression::HttpCommand(http_command) => http_command,
+                _ => panic!("tried to use an Expression as an HttpCommand when it was not one")
+            },
+            _ => panic!("tried to use a Statement as an Expression when it was not one")
+        }
+    }
+}
+
 #[derive(Debug)]
 struct HttpAssignment {
     lhs: String,
@@ -305,17 +326,154 @@ struct KeyValuePair {
     value: Value
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum Literal {
     Str(String),
     Int(i32),
     Bool(bool)
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum HTTPVerb {
     GET,
     PUT,
     POST,
     DELETE
+}
+
+/*
+-------------------------------------------------------------------------------------------------
+Here be testing
+-------------------------------------------------------------------------------------------------
+ */
+
+#[cfg(test)]
+mod tests {
+    use pest::Parser;
+    use crate::frontend::CScriptTokenPairs;
+    use super::*;
+
+    fn str_to_ast(input: &str) -> ChimeraScriptAST {
+        let pairs = match CScriptTokenPairs::parse(Rule::Statement, input) {
+            Ok(p) => p,
+            Err(_) => panic!("Failed to parse a ChimeraScript string with Pest.")
+        };
+        match ChimeraScriptAST::from_pairs(pairs) {
+            Ok(ast) => ast,
+            Err(_chimera_error) => {
+                panic!("Failed to convert Pest tokens into an AST for a very simple assertion.")
+            }
+        }
+    }
+
+    #[test]
+    /// Test the simplest possible assertion, 1 == 1, resolves to be an AssertCommand for two literals
+    fn simple_parse() {
+        let ast = str_to_ast("ASSERT EQUALS 1 1");
+        match ast.statement {
+            Statement::AssertCommand(assert_command) => {
+                assert_eq!(assert_command.negate_assertion, false, "negate_assertion should be false for an assertion which does not contain 'NOT'.");
+                assert_eq!(assert_command.subcommand, AssertSubCommand::EQUALS, "Assertion using EQUALS should have an AssertSubCommand::Equals subcommand.");
+                assert_eq!(assert_command.left_value, Value::Literal(Literal::Int(1)), "Assertion with a numerical literal should have a Literal::Int() value.");
+                assert_eq!(assert_command.right_value, Value::Literal(Literal::Int(1)));
+                assert_eq!(assert_command.error_message.is_none(), true, "Assertion error_message should be None when no message is specified.");
+            },
+            _ => panic!("AST statement of a very simple assertion was not resolved as an AssertCommand variant.")
+        }
+    }
+
+    #[test]
+    /// Test an EQUALS assertion which is negated and has an error message
+    fn full_equality_assertion() {
+        let ast = str_to_ast("ASSERT NOT EQUALS 1 2 \"foo\"");
+        match ast.statement {
+            Statement::AssertCommand(assert_command) => {
+                assert_eq!(assert_command.negate_assertion, true, "negate_assertion should be true for an assertion which contains 'NOT'.");
+                assert_eq!(assert_command.subcommand, AssertSubCommand::EQUALS, "Assertion using EQUALS should have an AssertSubCommand::Equals subcommand.");
+                assert_eq!(assert_command.left_value, Value::Literal(Literal::Int(1)), "Assertion with a numerical literal should have a Value::Literal(Literal::Int()) value.");
+                assert_eq!(assert_command.right_value, Value::Literal(Literal::Int(2)));
+                assert_eq!(assert_command.error_message.is_some(), true, "Assertion error_message should be Some() when message is specified.");
+                assert_eq!(assert_command.error_message.unwrap(), "\"foo\"".to_owned(), "Assertion error message was not equal to the supplied message");
+            },
+            _ => panic!("AST statement of a very simple assertion was not resolved as an AssertCommand variant.")
+        }
+    }
+
+    #[test]
+    /// Test the ASSERT subcommands; EQUALS, GTE, GT, LTE, LT, STATUS
+    fn assertion_subcommands() {
+        let trees: Vec<AssertCommand> = ["ASSERT EQUALS 1 1", "ASSERT GTE 1 1", "ASSERT GT 1 1", "ASSERT LTE 1 1", "ASSERT LT 1 1", "ASSERT STATUS 1 1"].into_iter().map(|x| str_to_ast(x).statement.into()).collect();
+        assert_eq!(trees.len(), 6);
+        assert_eq!(trees[0].subcommand, AssertSubCommand::EQUALS);
+        assert_eq!(trees[1].subcommand, AssertSubCommand::GTE);
+        assert_eq!(trees[2].subcommand, AssertSubCommand::GT);
+        assert_eq!(trees[3].subcommand, AssertSubCommand::LTE);
+        assert_eq!(trees[4].subcommand, AssertSubCommand::LT);
+        assert_eq!(trees[5].subcommand, AssertSubCommand::STATUS);
+    }
+
+    #[test]
+    /// Test assertions with each of the Value variants
+    fn assertion_values() {
+        let trees: Vec<AssertCommand> = ["ASSERT EQUALS (foo) 1", "ASSERT EQUALS \"test\" 10", "ASSERT EQUALS true false"].into_iter().map(|x| str_to_ast(x).statement.into()).collect();
+        assert_eq!(trees.len(), 3);
+        assert_eq!(trees[0].left_value, Value::Variable("(foo)".to_owned()));
+        assert_eq!(trees[0].right_value, Value::Literal(Literal::Int(1)));
+        assert_eq!(trees[1].left_value, Value::Literal(Literal::Str("\"test\"".to_owned())));
+        assert_eq!(trees[2].left_value, Value::Literal(Literal::Bool(true)));
+        assert_eq!(trees[2].right_value, Value::Literal(Literal::Bool(false)));
+    }
+
+    #[test]
+    /// Test a PRINT statement
+    fn print_statement() {
+        let ast = str_to_ast("PRINT 5");
+        match ast.statement {
+            Statement::PrintCommand(val) => assert_eq!(val, Value::Literal(Literal::Int(5))),
+            _ => panic!("Statement for a PRINT did not resolve to the correct variant.")
+        }
+    }
+
+    #[test]
+    /// Test a simple assignment with a literal expression
+    fn assignment_expression() {
+        let ast = str_to_ast("var foo = LITERAL 5");
+        match ast.statement {
+            Statement::AssignmentExpr(assignment_expr) => {
+                assert_eq!(assignment_expr.var_name, "foo".to_owned());
+                match assignment_expr.expression {
+                    Expression::LiteralExpression(literal_expression) => assert_eq!(literal_expression, Literal::Int(5)),
+                    _ => panic!("Assignment expression assigning a LITERAL did not resolve with the correct expression field")
+                }
+            },
+            _ => panic!("Statement for an assignment expression did not resolve to the correct variant.")
+        }
+    }
+
+    #[test]
+    /// Test an Http command expression
+    fn http_expression() {
+        let http_commands: Vec<HttpCommand> = ["GET /foo/bar", "PUT /foo", "POST /foo", "DELETE /foo"].into_iter().map(|x| str_to_ast(x).statement.into()).collect();
+        assert_eq!(http_commands.len(), 4);
+        assert_eq!(http_commands[0].verb, HTTPVerb::GET);
+        assert_eq!(http_commands[0].path, "/foo/bar".to_owned());
+        assert_eq!(http_commands[1].verb, HTTPVerb::PUT);
+        assert_eq!(http_commands[2].verb, HTTPVerb::POST);
+        assert_eq!(http_commands[3].verb, HTTPVerb::DELETE);
+
+        let with_path_assignments: HttpCommand = str_to_ast("GET /foo/bar/baz?foo=5&another=\"bar\"&boolean=true").statement.into();
+        assert_eq!(with_path_assignments.path, "/foo/bar/baz?foo=5&another=\"bar\"&boolean=true".to_owned());
+
+        // This HttpCommand has a path with args, assignments, and key/value pairs
+        // Probably should make this more atomic though (test just assignment, then key/value, then multiple of each)
+        let full_expression: HttpCommand = str_to_ast("GET /foo/bar/baz?foo=5&another=\"bar\" some_num=5 some_str=\"value\" timeout=>60 boolKey=>false").statement.into();
+        assert_eq!(full_expression.verb, HTTPVerb::GET);
+        assert_eq!(full_expression.path, "/foo/bar/baz?foo=5&another=\"bar\"".to_owned());
+        assert_eq!(full_expression.http_assignments.len(), 2);
+        assert_eq!(full_expression.http_assignments[0].lhs, "some_num".to_owned());
+        assert_eq!(full_expression.http_assignments[0].rhs, Value::Literal(Literal::Int(5)));
+        assert_eq!(full_expression.key_val_pairs.len(), 2);
+        assert_eq!(full_expression.key_val_pairs[0].key, "timeout".to_owned());
+        assert_eq!(full_expression.key_val_pairs[0].value, Value::Literal(Literal::Int(60)));
+    }
 }
