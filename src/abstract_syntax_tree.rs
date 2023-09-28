@@ -361,7 +361,7 @@ mod tests {
         match ChimeraScriptAST::from_pairs(pairs) {
             Ok(ast) => ast,
             Err(_chimera_error) => {
-                panic!("Failed to convert Pest tokens into an AST for a very simple assertion.")
+                panic!("Failed to convert Pest tokens into an AST.")
             }
         }
     }
