@@ -2,6 +2,7 @@ mod err_handle;
 mod frontend;
 mod abstract_syntax_tree;
 
+use std::collections::HashMap;
 use err_handle::print_error;
 
 extern crate yaml_rust;
@@ -10,6 +11,7 @@ use std::path::Path;
 use clap::Parser;
 use yaml_rust::YamlLoader;
 use crate::err_handle::ChimeraError;
+use crate::frontend::TestResult;
 
 const FILE_EXTENSION: &'static str = "chs";
 
@@ -57,11 +59,10 @@ fn main() {
                 Ok(tests) => {
                     let mut tests_passed = 0;
                     let mut tests_failed = 0;
+                    println!("RUNNING TESTS");
                     for test in tests {
-                        match test.run_test_case() {
-                            true => tests_passed += 1,
-                            false => tests_failed += 1
-                        }
+                        let mut test_case_variables: HashMap<String, abstract_syntax_tree::AssignmentValue> = HashMap::new();
+                        test.run_test_case(&mut test_case_variables, &mut tests_passed, &mut tests_failed, 0);
                     }
                     let overall_result = if tests_failed == 0 {"PASSED"} else {"FAILED"};
                     println!("TEST {} WITH {} SUCCESSES AND {} FAILURES", overall_result, tests_passed, tests_failed);

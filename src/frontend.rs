@@ -1,9 +1,17 @@
+use std::collections::HashMap;
 use pest::error::InputLocation;
 use pest::Parser;
 use pest_derive::Parser;
 use yaml_rust::Yaml;
 use crate::err_handle::ChimeraError;
-use crate::abstract_syntax_tree::ChimeraScriptAST;
+use crate::abstract_syntax_tree::*;
+
+pub enum TestResult {
+    Passed,
+    Failed,
+    ExpectedFailure,
+    UnexpectedSuccess
+}
 
 #[derive(Parser, Debug)]
 #[grammar = "grammar.pest"]
@@ -74,18 +82,85 @@ impl TestCase {
     }
 
     /// Runs a test case
-    pub fn run_test_case(self) -> bool {
-        println!("{:#?}", self);
-        // Will need a hashmap in this method to track variables to be accessed in setup, steps, and teardown
-        todo!()
+    pub fn run_test_case(self, variable_map: &mut HashMap<String, AssignmentValue>, tests_passed: &mut i32, tests_failed: &mut i32, depth: i32) -> TestResult {
+        let mut test_passed = true;
+        for _ in 0..depth {
+            print!("  ");
+        }
+        print!("{} ... ", self.name);
+
+        // TODO: Run setup
+
+        // Run the test
+        for step in self.steps {
+            match step {
+                Operation::Test(subtest) => {
+                    // TODO: If we are running a test by name, I believe we should run parent tests
+                    //       until we hit the named test, and then ignore subtests. Should
+                    //       probably make a dedicated "run_test_case_by_name" function?
+                    //       Will still need to run setup and teardown
+                    // TODO: If I want to stop inner tests from modifying vars in outer tests, I
+                    //       should be passing in a clone of the hashmap rather than a mut ref.
+                    //       What are the performance implications of this?
+                    match subtest.run_test_case(variable_map, tests_passed, tests_failed, depth + 1) {
+                        TestResult::Failed => {
+                            test_passed = false;
+                            break;
+                        },
+                        _ => ()
+                    }
+                },
+                Operation::Line(test_line) => {
+                    match test_line.run_line(variable_map) {
+                        true => (),
+                        false => {
+                            test_passed = false;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // TODO: Run teardown, regardless of whether or not test passed
+
+        match test_passed {
+            true => {
+                *tests_passed += 1;
+                match self.expected_failure {
+                    true =>  {
+                        println!("UNEXEPCTED SUCCESS");
+                        TestResult::UnexpectedSuccess
+                    },
+                    false =>  {
+                        println!("PASSED");
+                        TestResult::Passed
+                    }
+                }
+            },
+            false => {
+                match self.expected_failure {
+                    true => {
+                        println!("EXPECTED FAILURE");
+                        *tests_passed += 1;
+                        TestResult::ExpectedFailure
+                    },
+                    false => {
+                        println!("FAILED");
+                        *tests_failed += 1;
+                        TestResult::Failed
+                    }
+                }
+            }
+        }
     }
 }
 
 /// An Operation is an instruction within a test, it can be either a TestLine or a nested TestCase.
 #[derive(Debug)]
 enum Operation {
-    Test {test_case: TestCase},
-    Line {test_line: TestLine}
+    Test(TestCase),
+    Line(TestLine)
 }
 
 impl Operation {
@@ -100,7 +175,7 @@ impl Operation {
                         // If the element is a Yaml::Hash then it's a nested test-case
                         Yaml::Hash(nested_test_case) => {
                             let test_case = TestCase::from_yaml(Yaml::Hash(nested_test_case))?;
-                            res.push(Operation::Test {test_case});
+                            res.push(Operation::Test(test_case));
                         }
                         // If the element is a Yaml::String then it's a test-case line
                         Yaml::String(yaml_line) => {
@@ -110,7 +185,7 @@ impl Operation {
                                 Ok(parsed_line) => {
                                     let ast = ChimeraScriptAST::from_pairs(parsed_line)?;
                                     let test_line = TestLine { line: ast };
-                                    res.push(Operation::Line { test_line });
+                                    res.push(Operation::Line(test_line));
                                 }
                                 Err(e) => {
                                     return Err(handle_ast_err(e));
@@ -169,6 +244,56 @@ impl TestLine {
                 Ok(res)
             }
             _ => return Err(ChimeraError::InvalidChimeraFile("Cannot convert a Yaml to a vec unless it's a Yaml::Array variant.".to_owned()))
+        }
+    }
+
+    pub fn run_line(self, variable_map: &mut HashMap<String, AssignmentValue>) -> bool {
+        // TODO: If an assertion fails we want an error message as to what happened
+        let syntax_tree = self.line;
+        match syntax_tree.statement {
+            Statement::AssertCommand(assert_command) => {
+                let mut assertion_passed = true;
+                match assert_command.subcommand {
+                    AssertSubCommand::EQUALS => {
+
+                    },
+                    AssertSubCommand::GTE => {
+                        // left and right have to be int
+                    },
+                    AssertSubCommand::GT => {
+                        // left and right have to be int
+                    },
+                    AssertSubCommand::LTE => {
+                        // left and right have to be int
+                    },
+                    AssertSubCommand::LT => {
+                        // left and right have to be int
+                    },
+                    AssertSubCommand::STATUS => {
+                        // left needs to be a web response variable
+                        // right needs to be an int
+                        todo!()
+                    }
+                }
+                if assert_command.negate_assertion { assertion_passed = !assertion_passed };
+                if !assertion_passed {
+                    // TODO: Display error message
+                    //       How to reconcile with prints in run_test_case above?
+                }
+                assertion_passed
+            },
+            Statement::AssignmentExpr(assert_expr) => {
+                // TODO
+                true
+            },
+            Statement::PrintCommand(print_cmd) => {
+                // TODO
+                true
+            },
+            Statement::Expression(expr) => {
+                // TODO
+                true
+            }
         }
     }
 }
