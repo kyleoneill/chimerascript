@@ -5,7 +5,7 @@ use crate::frontend::Rule;
 
 #[derive(Debug)]
 pub struct ChimeraScriptAST {
-    statement: Statement
+    pub statement: Statement
 }
 
 impl ChimeraScriptAST {
@@ -241,7 +241,7 @@ impl ChimeraScriptAST {
 }
 
 #[derive(Debug)]
-enum Statement {
+pub enum Statement {
     AssignmentExpr(AssignmentExpr),
     AssertCommand(AssertCommand),
     PrintCommand(Value),
@@ -249,24 +249,24 @@ enum Statement {
 }
 
 #[derive(Debug)]
-struct AssignmentExpr {
+pub struct AssignmentExpr {
     var_name: String,
     expression: Expression
 }
 
 #[derive(Debug)]
-enum Expression {
+pub enum Expression {
     LiteralExpression(Literal),
     HttpCommand(HttpCommand)
 }
 
 #[derive(Debug)]
-struct AssertCommand {
-    negate_assertion: bool,
-    subcommand: AssertSubCommand,
-    left_value: Value,
-    right_value: Value,
-    error_message: Option<String>
+pub struct AssertCommand {
+    pub negate_assertion: bool,
+    pub subcommand: AssertSubCommand,
+    pub left_value: Value,
+    pub right_value: Value,
+    pub error_message: Option<String>
 }
 
 impl From<Statement> for AssertCommand {
@@ -279,13 +279,13 @@ impl From<Statement> for AssertCommand {
 }
 
 #[derive(Debug, PartialEq)]
-enum Value {
+pub enum Value {
     Literal(Literal),
     Variable(String)
 }
 
 #[derive(Debug, PartialEq)]
-enum AssertSubCommand {
+pub enum AssertSubCommand {
     EQUALS,
     GTE,
     GT,
@@ -295,7 +295,7 @@ enum AssertSubCommand {
 }
 
 #[derive(Debug)]
-struct HttpCommand {
+pub struct HttpCommand {
     verb: HTTPVerb,
     path: String,
     http_assignments: Vec<HttpAssignment>,
@@ -315,30 +315,37 @@ impl From<Statement> for HttpCommand {
 }
 
 #[derive(Debug)]
-struct HttpAssignment {
+pub struct HttpAssignment {
     lhs: String,
     rhs: Value
 }
 
 #[derive(Debug)]
-struct KeyValuePair {
+pub struct KeyValuePair {
     key: String,
     value: Value
 }
 
-#[derive(Debug, PartialEq)]
-enum Literal {
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub enum Literal {
     Str(String),
     Int(i32),
     Bool(bool)
 }
 
 #[derive(Debug, PartialEq)]
-enum HTTPVerb {
+pub enum HTTPVerb {
     GET,
     PUT,
     POST,
     DELETE
+}
+
+#[derive(PartialEq, Eq, Hash)]
+pub enum AssignmentValue {
+    Literal(Literal),
+    // TODO: http request response
+    // TODO: json? maybe store that just as a str?
 }
 
 /*

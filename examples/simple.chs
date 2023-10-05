@@ -1,3 +1,3 @@
 - case: simple-test
   steps:
-    - ASSERT NOT EQUALS 1 (foo.bar) "bla"
+    - ASSERT EQUALS 1 1

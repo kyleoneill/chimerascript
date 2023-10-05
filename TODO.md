@@ -9,6 +9,13 @@
   - frontend
   - Actual behavior (once that feature is done)
     - Move tests from AST to here? Just copy tests?
+  - Nested tests
+  - Setup
+  - Teardown
+    - Teardown running when the test fails
 - Ability to send Http requests to full paths so requests can go to endpoints
   other than just the one specified in config
 - Support for comments
+- Support for running a test by name
+  - Accessed with args.name in main.rs
+- Test tagging?
