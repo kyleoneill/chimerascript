@@ -3,8 +3,19 @@ use pest::error::InputLocation;
 use pest::Parser;
 use pest_derive::Parser;
 use yaml_rust::Yaml;
-use crate::err_handle::ChimeraError;
+use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure};
 use crate::abstract_syntax_tree::*;
+
+pub struct Context {
+    pub current_line: i32,
+    pub area: String
+}
+
+impl Context {
+    pub fn new() -> Self {
+        Self { current_line: 0, area: "".to_owned()}
+    }
+}
 
 pub enum TestResult {
     Passed,
@@ -31,7 +42,7 @@ pub struct TestCase {
 }
 
 impl TestCase {
-    fn from_yaml(yaml: Yaml) -> Result<Self, ChimeraError> {
+    fn from_yaml(yaml: Yaml) -> Result<Self, ChimeraCompileError> {
         match yaml {
             Yaml::Hash(mut case) => {
                 // the smallest possible test file needs at least 2 Yaml items, ex
@@ -39,7 +50,7 @@ impl TestCase {
                 //   steps:     <-- This is the second item
                 //     - ASSERT EQUALS 1 1 <-- This is under the second item
                 if case.len() < 2 {
-                    return Err(ChimeraError::InvalidChimeraFile("TestCase must have at least one case and its steps.".to_owned()))
+                    return Err(ChimeraCompileError::InvalidChimeraFile("TestCase must have at least one case and its steps.".to_owned()))
                 }
 
                 // TODO: The below needs to be refactored, there _has_ to be a cleaner way to do this
@@ -53,11 +64,11 @@ impl TestCase {
 
                 // Grab our test-case keys from the yaml. The case name and steps are mandatory, error if they are not present
                 // expected_failure, setup, and teardown are optional. Default to false and empty arrays if they aren't present
-                let name = if case.contains_key(&name_key) {case.get(&name_key).unwrap().as_str().unwrap().to_owned()} else {return Err(ChimeraError::InvalidChimeraFile("TestCase must have a 'case' key which contains its name.".to_owned()))};
+                let name = if case.contains_key(&name_key) {case.get(&name_key).unwrap().as_str().unwrap().to_owned()} else {return Err(ChimeraCompileError::InvalidChimeraFile("TestCase must have a 'case' key which contains its name.".to_owned()))};
                 let expected_failure_yaml = if case.contains_key(&expected_key) {case.get(&expected_key).unwrap().as_bool()} else {None};
                 let expected_failure = if expected_failure_yaml.is_some() {expected_failure_yaml.unwrap()} else {false};
                 let setup_yaml = if case.contains_key(&setup_key) {case.remove(&setup_key).unwrap()} else {Yaml::Array(vec![])};
-                let steps_yaml = if case.contains_key(&step_key) {case.remove(&step_key).unwrap()} else {return Err(ChimeraError::InvalidChimeraFile("TestCase must have a 'steps' key which contains its steps.".to_owned()))};
+                let steps_yaml = if case.contains_key(&step_key) {case.remove(&step_key).unwrap()} else {return Err(ChimeraCompileError::InvalidChimeraFile("TestCase must have a 'steps' key which contains its steps.".to_owned()))};
                 let teardown_yaml = if case.contains_key(&teardown_key) {case.remove(&teardown_key).unwrap()} else {Yaml::Array(vec![])};
 
                 // Convert setup and teardown from Yaml::Array into Vec<TestLine>
@@ -76,22 +87,25 @@ impl TestCase {
                 })
             }
             _ => {
-                Err(ChimeraError::InvalidChimeraFile("A yaml TestCase must begin with a Yaml::Hash variant.".to_owned()))
+                Err(ChimeraCompileError::InvalidChimeraFile("A yaml TestCase must begin with a Yaml::Hash variant.".to_owned()))
             }
         }
     }
 
     /// Runs a test case
-    pub fn run_test_case(self, variable_map: &mut HashMap<String, AssignmentValue>, tests_passed: &mut i32, tests_failed: &mut i32, depth: i32) -> TestResult {
+    pub fn run_test_case(self, variable_map: &mut HashMap<String, AssignmentValue>, tests_passed: &mut i32, tests_failed: &mut i32, depth: i32) -> Result<TestResult, ChimeraRuntimeFailure> {
         let mut test_passed = true;
         for _ in 0..depth {
             print!("  ");
         }
         print!("{} ... ", self.name);
 
+        let mut context = Context::new();
+
         // TODO: Run setup
 
         // Run the test
+        context.area = "steps".to_owned();
         for step in self.steps {
             match step {
                 Operation::Test(subtest) => {
@@ -102,27 +116,35 @@ impl TestCase {
                     // TODO: If I want to stop inner tests from modifying vars in outer tests, I
                     //       should be passing in a clone of the hashmap rather than a mut ref.
                     //       What are the performance implications of this?
-                    match subtest.run_test_case(variable_map, tests_passed, tests_failed, depth + 1) {
+                    // TODO: I don't think we want to ? this, if there is a failure it's just going
+                    //       to kill this method's run and propagate the error upwards. I think
+                    //       we want to match on the Result from run_test_case and handle error
+                    //       printing right here. Might want to add some contextual error gatherer
+                    //       struct or hashmap or something to display all errors at the end of the
+                    //       run as well?
+                    match subtest.run_test_case(variable_map, tests_passed, tests_failed, depth + 1)? {
                         TestResult::Failed => {
                             test_passed = false;
-                            break;
                         },
                         _ => ()
                     }
                 },
                 Operation::Line(test_line) => {
-                    match test_line.run_line(variable_map) {
-                        true => (),
-                        false => {
-                            test_passed = false;
-                            break;
+                    match test_line.run_line(variable_map, &context) {
+                        Ok(_) => (),
+                        Err(e) => {
+                            // TODO: RUN TEARDOWN HERE NOW
+                            *tests_failed += 1;
+                            println!("FAILED");
+                            return Err(e)
                         }
                     }
                 }
             }
+            context.current_line += 1;
         }
 
-        // TODO: Run teardown, regardless of whether or not test passed
+        // TODO: Run teardown
 
         match test_passed {
             true => {
@@ -130,11 +152,11 @@ impl TestCase {
                 match self.expected_failure {
                     true =>  {
                         println!("UNEXEPCTED SUCCESS");
-                        TestResult::UnexpectedSuccess
+                        Ok(TestResult::UnexpectedSuccess)
                     },
                     false =>  {
                         println!("PASSED");
-                        TestResult::Passed
+                        Ok(TestResult::Passed)
                     }
                 }
             },
@@ -143,12 +165,12 @@ impl TestCase {
                     true => {
                         println!("EXPECTED FAILURE");
                         *tests_passed += 1;
-                        TestResult::ExpectedFailure
+                        Ok(TestResult::ExpectedFailure)
                     },
                     false => {
                         println!("FAILED");
                         *tests_failed += 1;
-                        TestResult::Failed
+                        Ok(TestResult::Failed)
                     }
                 }
             }
@@ -165,7 +187,7 @@ enum Operation {
 
 impl Operation {
     /// Convert a Yaml::Array into a Vec<Operation>
-    pub fn vec_from_yaml_array(input: Yaml) -> Result<Vec<Self>, ChimeraError> {
+    pub fn vec_from_yaml_array(input: Yaml) -> Result<Vec<Self>, ChimeraCompileError> {
         match input {
             Yaml::Array(yaml_arr) => {
                 let mut res: Vec<Self> = Vec::new();
@@ -192,12 +214,12 @@ impl Operation {
                                 }
                             }
                         }
-                        _ => return Err(ChimeraError::InvalidChimeraFile("A test case line must contain either a string to parse into ChimeraScript or a nested TestCase, but got neither.".to_owned()))
+                        _ => return Err(ChimeraCompileError::InvalidChimeraFile("A test case line must contain either a string to parse into ChimeraScript or a nested TestCase, but got neither.".to_owned()))
                     }
                 }
                 Ok(res)
             }
-            _ => return Err(ChimeraError::InvalidChimeraFile("Cannot convert a Yaml to a vec unless it's a Yaml::Array variant.".to_owned()))
+            _ => return Err(ChimeraCompileError::InvalidChimeraFile("Cannot convert a Yaml to a vec unless it's a Yaml::Array variant.".to_owned()))
         }
     }
 }
@@ -210,7 +232,7 @@ struct TestLine {
 
 impl TestLine {
     /// Convert a Yaml::Array into a Vec<TestLine>
-    pub fn vec_from_yaml_array(input: Yaml) -> Result<Vec<Self>, ChimeraError> {
+    pub fn vec_from_yaml_array(input: Yaml) -> Result<Vec<Self>, ChimeraCompileError> {
         // TODO: There is a lot of overlap between this and the Operation method of the same name,
         //       I should make this DRY
         match input {
@@ -221,7 +243,7 @@ impl TestLine {
                     match yaml {
                         // If the element is a Yaml::Hash then it's a nested test-case
                         Yaml::Hash(_nested_test_case) => {
-                            return Err(ChimeraError::InvalidChimeraFile("Setup and teardown sections cannot contain a nested sub-case.".to_owned()));
+                            return Err(ChimeraCompileError::InvalidChimeraFile("Setup and teardown sections cannot contain a nested sub-case.".to_owned()));
                         }
                         // If the element is a Yaml::String then it's a test-case line
                         Yaml::String(yaml_line) => {
@@ -238,72 +260,78 @@ impl TestLine {
                                 }
                             }
                         }
-                        _ => return Err(ChimeraError::InvalidChimeraFile("A test case setup or teardown line can only contain a string to parse into ChimeraScript, but got something else.".to_owned()))
+                        _ => return Err(ChimeraCompileError::InvalidChimeraFile("A test case setup or teardown line can only contain a string to parse into ChimeraScript, but got something else.".to_owned()))
                     }
                 }
                 Ok(res)
             }
-            _ => return Err(ChimeraError::InvalidChimeraFile("Cannot convert a Yaml to a vec unless it's a Yaml::Array variant.".to_owned()))
+            _ => return Err(ChimeraCompileError::InvalidChimeraFile("Cannot convert a Yaml to a vec unless it's a Yaml::Array variant.".to_owned()))
         }
     }
 
-    pub fn run_line(self, variable_map: &mut HashMap<String, AssignmentValue>) -> bool {
+    pub fn run_line(self, variable_map: &mut HashMap<String, AssignmentValue>, context: &Context) -> Result<(), ChimeraRuntimeFailure> {
         // TODO: If an assertion fails we want an error message as to what happened
         let syntax_tree = self.line;
         match syntax_tree.statement {
             Statement::AssertCommand(assert_command) => {
-                let mut assertion_passed = true;
-                match assert_command.subcommand {
-                    AssertSubCommand::EQUALS => {
-
-                    },
+                let left_value = AssignmentValue::resolve_value(assert_command.left_value, variable_map, context)?;
+                let right_value = AssignmentValue::resolve_value(assert_command.right_value, variable_map, context)?;
+                let assertion_passed = match assert_command.subcommand {
+                    AssertSubCommand::EQUALS => { left_value == right_value },
                     AssertSubCommand::GTE => {
                         // left and right have to be int
+                        todo!()
                     },
                     AssertSubCommand::GT => {
                         // left and right have to be int
+                        todo!()
                     },
                     AssertSubCommand::LTE => {
                         // left and right have to be int
+                        todo!()
                     },
                     AssertSubCommand::LT => {
                         // left and right have to be int
+                        todo!()
                     },
                     AssertSubCommand::STATUS => {
                         // left needs to be a web response variable
                         // right needs to be an int
                         todo!()
                     }
+                };
+                if assert_command.negate_assertion && assertion_passed {
+                    // Assertion was true but expected to be false
+                    return Err(ChimeraRuntimeFailure::TestFailure(format!("Expected {} to not {} {}", left_value, assert_command.subcommand, right_value), context.current_line))
                 }
-                if assert_command.negate_assertion { assertion_passed = !assertion_passed };
-                if !assertion_passed {
-                    // TODO: Display error message
-                    //       How to reconcile with prints in run_test_case above?
+                else if !assert_command.negate_assertion && !assertion_passed {
+                    // Assertion was false but expected to be true
+                    return Err(ChimeraRuntimeFailure::TestFailure(format!("Expected {} to {} {}", left_value, assert_command.subcommand, right_value), context.current_line))
                 }
-                assertion_passed
+                Ok(())
             },
             Statement::AssignmentExpr(assert_expr) => {
                 // TODO
-                true
+                Ok(())
             },
             Statement::PrintCommand(print_cmd) => {
                 // TODO
-                true
+                Ok(())
             },
             Statement::Expression(expr) => {
                 // TODO
-                true
+                Ok(())
             }
         }
     }
 }
 
-fn handle_ast_err(e: pest::error::Error<Rule>) -> ChimeraError {
+fn handle_ast_err(e: pest::error::Error<Rule>) -> ChimeraCompileError {
     let position = match e.location {
         InputLocation::Pos(pos) => pos,
         InputLocation::Span((start, _end)) => start
     };
-    ChimeraError::FailedParseAST(format!("Failed to parse ChimeraScript at position {} of line: {}", position, e.line()).to_owned())
+    ChimeraCompileError::FailedParseAST(format!("Failed to parse ChimeraScript at position {} of line: {}", position, e.line()).to_owned())
     // match e.variant {
     //     pest::error::ErrorVariant::ParsingError {
     //         positives,
@@ -315,7 +343,7 @@ fn handle_ast_err(e: pest::error::Error<Rule>) -> ChimeraError {
     // }
 }
 
-pub fn iterate_yaml(yaml_doc: Yaml) -> Result<Vec<TestCase>, ChimeraError> {
+pub fn iterate_yaml(yaml_doc: Yaml) -> Result<Vec<TestCase>, ChimeraCompileError> {
     match yaml_doc {
         Yaml::Array(yaml_arr) => {
             let mut ret: Vec<TestCase> = Vec::new();
@@ -326,7 +354,7 @@ pub fn iterate_yaml(yaml_doc: Yaml) -> Result<Vec<TestCase>, ChimeraError> {
             Ok(ret)
         }
         _ => {
-            Err(ChimeraError::InvalidChimeraFile("chs file should begin with a list of test cases but it did not.".to_owned()))
+            Err(ChimeraCompileError::InvalidChimeraFile("chs file should begin with a list of test cases but it did not.".to_owned()))
         }
     }
 }
