@@ -10,8 +10,7 @@ use std::fs;
 use std::path::Path;
 use clap::Parser;
 use yaml_rust::YamlLoader;
-use crate::err_handle::ChimeraError;
-use crate::frontend::TestResult;
+use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure};
 
 const FILE_EXTENSION: &'static str = "chs";
 
@@ -62,16 +61,19 @@ fn main() {
                     println!("RUNNING TESTS");
                     for test in tests {
                         let mut test_case_variables: HashMap<String, abstract_syntax_tree::AssignmentValue> = HashMap::new();
-                        test.run_test_case(&mut test_case_variables, &mut tests_passed, &mut tests_failed, 0);
+                        match test.run_test_case(&mut test_case_variables, &mut tests_passed, &mut tests_failed, 0) {
+                            Ok(_) => continue,
+                            Err(err) => {
+                                err.print_error();
+                                break;
+                            }
+                        }
                     }
                     let overall_result = if tests_failed == 0 {"PASSED"} else {"FAILED"};
                     println!("TEST {} WITH {} SUCCESSES AND {} FAILURES", overall_result, tests_passed, tests_failed);
                 }
                 Err(err) => {
-                    match err {
-                        ChimeraError::InvalidChimeraFile(msg) => print_error(&msg),
-                        ChimeraError::FailedParseAST(msg) => print_error(&format!("Failed to parse tokens into AST, {}", &msg))
-                    }
+                    err.print_error();
                 }
             }
         },

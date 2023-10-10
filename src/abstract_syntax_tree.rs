@@ -1,7 +1,9 @@
+use std::collections::HashMap;
+use std::fmt::Formatter;
 use pest::iterators::{Pair, Pairs};
-use crate::err_handle::ChimeraError;
-use crate::err_handle::ChimeraError::FailedParseAST;
-use crate::frontend::Rule;
+use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure};
+use crate::err_handle::ChimeraCompileError::FailedParseAST;
+use crate::frontend::{Rule, Context};
 
 #[derive(Debug)]
 pub struct ChimeraScriptAST {
@@ -10,7 +12,7 @@ pub struct ChimeraScriptAST {
 
 impl ChimeraScriptAST {
     /// Convert Pest tokens into an abstract syntax tree.
-    pub fn from_pairs(pairs: Pairs<Rule>) -> Result<Self, ChimeraError> {
+    pub fn from_pairs(pairs: Pairs<Rule>) -> Result<Self, ChimeraCompileError> {
         // There should only be one Pair<Rule> here, do I even need a loop or should I just get
         // the first/next out of the iter?
         for pair in pairs {
@@ -20,7 +22,7 @@ impl ChimeraScriptAST {
         Err(FailedParseAST("did not get any Rule pairs".to_owned()))
     }
 
-    fn parse_rule_to_statement(pair: Pair<Rule>) -> Result<Statement, ChimeraError> {
+    fn parse_rule_to_statement(pair: Pair<Rule>) -> Result<Statement, ChimeraCompileError> {
         match pair.as_rule() {
             Rule::Statement => {
                 // The outermost layer is going to be a Rule::Statement, we want to just into_inner
@@ -126,7 +128,7 @@ impl ChimeraScriptAST {
         }
     }
 
-    fn parse_rule_to_value(pair: Pair<Rule>) -> Result<Value, ChimeraError> {
+    fn parse_rule_to_value(pair: Pair<Rule>) -> Result<Value, ChimeraCompileError> {
         if pair.as_rule() != Rule::Value {return Err(FailedParseAST("expected a Rule::Value but got a different Rule variant".to_owned()))};
         let inner = pair.into_inner().peek().ok_or_else(|| return FailedParseAST("Rule::Value did not contain an inner".to_owned()))?;
         return match inner.as_rule() {
@@ -135,14 +137,15 @@ impl ChimeraScriptAST {
                 Ok(Value::Literal(literal_value))
             },
             Rule::VariableValue => {
-                // A VariableValue is stored as a string and looks like (this) or (this.that)
-                Ok(Value::Variable(inner.as_str().to_owned()))
+                // We want to remove the opening and closing parenthesis from the var name
+                let var_name_str = inner.as_str();
+                Ok(Value::Variable(var_name_str[1..var_name_str.len() - 1].to_owned()))
             },
             _ => { Err(FailedParseAST("got an invalid Rule variant while parsing the inner of a Rule::Value".to_owned()))}
         }
     }
 
-    fn parse_rule_to_literal_value(pair: Pair<Rule>) -> Result<Literal, ChimeraError> {
+    fn parse_rule_to_literal_value(pair: Pair<Rule>) -> Result<Literal, ChimeraCompileError> {
         // A literal can be an int, a bool, or a string. Check to see if it's an int
         // or bool before setting it to be a string
         match pair.as_str().parse::<i32>() {
@@ -157,7 +160,7 @@ impl ChimeraScriptAST {
         Ok(res)
     }
 
-    fn parse_rule_to_expression(pair: Pair<Rule>) -> Result<Expression, ChimeraError> {
+    fn parse_rule_to_expression(pair: Pair<Rule>) -> Result<Expression, ChimeraCompileError> {
         // An Expression is going to contain EITHER
         // a. A LiteralValue which will hold some literal
         // b. An HttpCommand which will contain
@@ -294,6 +297,19 @@ pub enum AssertSubCommand {
     STATUS
 }
 
+impl std::fmt::Display for AssertSubCommand {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AssertSubCommand::EQUALS => write!(f, "equal"),
+            AssertSubCommand::GTE => write!(f, "be greater than or equal to"),
+            AssertSubCommand::GT => write!(f, "be greater than"),
+            AssertSubCommand::LTE => write!(f, "be less than or equal to"),
+            AssertSubCommand::LT => write!(f, "be less than"),
+            AssertSubCommand::STATUS => write!(f, "have a status code of")
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct HttpCommand {
     verb: HTTPVerb,
@@ -326,11 +342,21 @@ pub struct KeyValuePair {
     value: Value
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum Literal {
     Str(String),
     Int(i32),
     Bool(bool)
+}
+
+impl std::fmt::Display for Literal {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Literal::Str(str) => write!(f, "{}", str),
+            Literal::Int(int) => write!(f, "{}", int),
+            Literal::Bool(bool) => write!(f, "{}", bool)
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -341,11 +367,50 @@ pub enum HTTPVerb {
     DELETE
 }
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq, Hash, Clone)]
 pub enum AssignmentValue {
     Literal(Literal),
     // TODO: http request response
     // TODO: json? maybe store that just as a str?
+}
+
+impl std::fmt::Display for AssignmentValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AssignmentValue::Literal(literal) => write!(f, "{}", literal)
+        }
+    }
+}
+
+impl AssignmentValue {
+    pub fn resolve_value(value: Value, variable_map: &HashMap<String, Self>, context: &Context) -> Result<Self, ChimeraRuntimeFailure> {
+        match value {
+            Value::Literal(val) => {
+                Ok(Self::Literal(val))
+            },
+            Value::Variable(var_name) => {
+                // TODO: I need dot resolution, if var_name is something like (foo.bar.baz) then we are interested
+                //       in grabbing var foo and then seeking subfield bar.baz
+                match variable_map.get(&var_name) {
+                    // TODO: Is there a way to make this return a ref instead? clone might be
+                    //       expensive for a web response
+                    Some(res) => return Ok(res.clone()),
+                    None => Err(ChimeraRuntimeFailure::VarNotFound(var_name, context.current_line))
+                }
+            }
+        }
+    }
+
+    pub fn is_numeric(&self) -> bool {
+        match self {
+            Self::Literal(literal) => {
+                match literal {
+                    Literal::Int(_) => true,
+                    _ => false
+                }
+            }
+        }
+    }
 }
 
 /*
@@ -424,7 +489,7 @@ mod tests {
     fn assertion_values() {
         let trees: Vec<AssertCommand> = ["ASSERT EQUALS (foo) 1", "ASSERT EQUALS \"test\" 10", "ASSERT EQUALS true false"].into_iter().map(|x| str_to_ast(x).statement.into()).collect();
         assert_eq!(trees.len(), 3);
-        assert_eq!(trees[0].left_value, Value::Variable("(foo)".to_owned()));
+        assert_eq!(trees[0].left_value, Value::Variable("foo".to_owned()));
         assert_eq!(trees[0].right_value, Value::Literal(Literal::Int(1)));
         assert_eq!(trees[1].left_value, Value::Literal(Literal::Str("\"test\"".to_owned())));
         assert_eq!(trees[2].left_value, Value::Literal(Literal::Bool(true)));
