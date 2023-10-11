@@ -61,7 +61,7 @@ fn main() {
                     println!("RUNNING TESTS");
                     for test in tests {
                         let mut test_case_variables: HashMap<String, abstract_syntax_tree::AssignmentValue> = HashMap::new();
-                        match test.run_test_case(&mut test_case_variables, &mut tests_passed, &mut tests_failed, 0) {
+                        match test.run_test_case(&mut test_case_variables, &mut tests_passed, &mut tests_failed, 1) {
                             Ok(_) => continue,
                             Err(err) => {
                                 err.print_error();

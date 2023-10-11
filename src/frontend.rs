@@ -3,7 +3,7 @@ use pest::error::InputLocation;
 use pest::Parser;
 use pest_derive::Parser;
 use yaml_rust::Yaml;
-use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure};
+use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure, VarTypes};
 use crate::abstract_syntax_tree::*;
 
 pub struct Context {
@@ -92,13 +92,17 @@ impl TestCase {
         }
     }
 
+    pub fn print_in_test(thing_to_print: &str, depth: i32) {
+        for _ in 0..depth {
+            print!(" ");
+        }
+        println!("{}", thing_to_print);
+    }
+
     /// Runs a test case
     pub fn run_test_case(self, variable_map: &mut HashMap<String, AssignmentValue>, tests_passed: &mut i32, tests_failed: &mut i32, depth: i32) -> Result<TestResult, ChimeraRuntimeFailure> {
         let mut test_passed = true;
-        for _ in 0..depth {
-            print!("  ");
-        }
-        print!("{} ... ", self.name);
+        Self::print_in_test(&format!("RUNNING TEST {}", self.name), depth);
 
         let mut context = Context::new();
 
@@ -130,12 +134,12 @@ impl TestCase {
                     }
                 },
                 Operation::Line(test_line) => {
-                    match test_line.run_line(variable_map, &context) {
+                    match test_line.run_line(variable_map, &context, depth) {
                         Ok(_) => (),
                         Err(e) => {
                             // TODO: RUN TEARDOWN HERE NOW
                             *tests_failed += 1;
-                            println!("FAILED");
+                            Self::print_in_test(&format!("TEST {} FAILED", self.name), depth);
                             return Err(e)
                         }
                     }
@@ -146,6 +150,9 @@ impl TestCase {
 
         // TODO: Run teardown
 
+        // TODO: This entire return structure is bad and I am just tossing out the return value.
+        //       get rid of this and just increment tests_passed and tests_failed in the right spot
+        //       in the method. I believe we should just return Result<(), ChimeraRuntimeFailure>
         match test_passed {
             true => {
                 *tests_passed += 1;
@@ -155,7 +162,7 @@ impl TestCase {
                         Ok(TestResult::UnexpectedSuccess)
                     },
                     false =>  {
-                        println!("PASSED");
+                        Self::print_in_test(&format!("TEST {} PASSED", self.name), depth);
                         Ok(TestResult::Passed)
                     }
                 }
@@ -168,7 +175,7 @@ impl TestCase {
                         Ok(TestResult::ExpectedFailure)
                     },
                     false => {
-                        println!("FAILED");
+                        Self::print_in_test(&format!("TEST {} FAILED", self.name), depth);
                         *tests_failed += 1;
                         Ok(TestResult::Failed)
                     }
@@ -269,35 +276,42 @@ impl TestLine {
         }
     }
 
-    pub fn run_line(self, variable_map: &mut HashMap<String, AssignmentValue>, context: &Context) -> Result<(), ChimeraRuntimeFailure> {
-        // TODO: If an assertion fails we want an error message as to what happened
+    pub fn run_line(self, variable_map: &mut HashMap<String, AssignmentValue>, context: &Context, depth: i32) -> Result<(), ChimeraRuntimeFailure> {
         let syntax_tree = self.line;
         match syntax_tree.statement {
             Statement::AssertCommand(assert_command) => {
-                let left_value = AssignmentValue::resolve_value(assert_command.left_value, variable_map, context)?;
-                let right_value = AssignmentValue::resolve_value(assert_command.right_value, variable_map, context)?;
+                // TODO: We're passing a cloned copy of left/right here so we still have access
+                //       to the variables for error handling inside matching. Is there a way to
+                //       error handle without cloning?
+                let left_value = AssignmentValue::resolve_value(assert_command.left_value.clone(), variable_map, context)?;
+                let right_value = AssignmentValue::resolve_value(assert_command.right_value.clone(), variable_map, context)?;
                 let assertion_passed = match assert_command.subcommand {
                     AssertSubCommand::EQUALS => { left_value == right_value },
-                    AssertSubCommand::GTE => {
-                        // left and right have to be int
-                        todo!()
-                    },
-                    AssertSubCommand::GT => {
-                        // left and right have to be int
-                        todo!()
-                    },
-                    AssertSubCommand::LTE => {
-                        // left and right have to be int
-                        todo!()
-                    },
-                    AssertSubCommand::LT => {
-                        // left and right have to be int
-                        todo!()
-                    },
                     AssertSubCommand::STATUS => {
                         // left needs to be a web response variable
-                        // right needs to be an int
+                        if !right_value.is_numeric() { return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.right_value.error_print(), VarTypes::Int, context.current_line)) }
                         todo!()
+                    },
+                    _ => {
+                        // The remaining matches are the four relational operators, left_value and
+                        // right_value must be ints for all four
+                        if !left_value.is_numeric() { return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.left_value.error_print(), VarTypes::Int, context.current_line)) }
+                        if !right_value.is_numeric() { return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.right_value.error_print(), VarTypes::Int, context.current_line)) }
+                        match assert_command.subcommand {
+                            AssertSubCommand::GTE => {
+                                left_value.to_int() >= right_value.to_int()
+                            },
+                            AssertSubCommand::GT => {
+                                left_value.to_int() > right_value.to_int()
+                            },
+                            AssertSubCommand::LTE => {
+                                left_value.to_int() <= right_value.to_int()
+                            },
+                            AssertSubCommand::LT => {
+                                left_value.to_int() < right_value.to_int()
+                            }
+                            _ => panic!("Failed to handle an ASSERT subcommand case")
+                        }
                     }
                 };
                 if assert_command.negate_assertion && assertion_passed {
@@ -315,7 +329,8 @@ impl TestLine {
                 Ok(())
             },
             Statement::PrintCommand(print_cmd) => {
-                // TODO
+                let resolved = AssignmentValue::resolve_value(print_cmd, variable_map, context)?;
+                TestCase::print_in_test(&format!("{}", resolved), depth);
                 Ok(())
             },
             Statement::Expression(expr) => {
