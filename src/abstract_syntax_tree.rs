@@ -281,10 +281,29 @@ impl From<Statement> for AssertCommand {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Value {
     Literal(Literal),
     Variable(String)
+}
+
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Literal(literal) => write!(f, "{}", literal),
+            Value::Variable(var_name) => write!(f, "{}", var_name)
+        }
+    }
+}
+
+impl Value {
+    // This name is bad, come up with a better one
+    pub fn error_print(&self) -> String {
+        match self {
+            Value::Literal(literal) => format!("value {}", literal.to_string()),
+            Value::Variable(var_name) => format!("var {}", var_name.to_owned())
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -407,6 +426,23 @@ impl AssignmentValue {
                 match literal {
                     Literal::Int(_) => true,
                     _ => false
+                }
+            }
+        }
+    }
+
+    pub fn to_int(&self) -> i32 {
+        match self {
+            Self::Literal(literal) => {
+                match literal {
+                    Literal::Str(str) => panic!("Tried to convert a Literal::String to an int"),
+                    Literal::Bool(bool) => {
+                        match bool {
+                            true => 1,
+                            false => 0
+                        }
+                    },
+                    Literal::Int(int) => *int
                 }
             }
         }

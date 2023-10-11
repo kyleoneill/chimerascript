@@ -1,5 +1,6 @@
 - case: oneOfEach
   steps:
+    - ASSERT GTE 5 5
     - GET /test/thing?field="val"&another="bla" thing=5 somekey=>"value"
     - ASSERT EQUALS 1 1
     - ASSERT NOT EQUALS 1 2 "msg"

@@ -1,3 +1,5 @@
+use std::fmt::Formatter;
+
 #[derive(Debug)]
 pub enum ChimeraCompileError {
     InvalidChimeraFile(String),
@@ -15,9 +17,22 @@ impl ChimeraCompileError {
 }
 
 #[derive(Debug)]
+pub enum VarTypes {
+    Int
+}
+
+impl std::fmt::Display for VarTypes {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VarTypes::Int => write!(f, "int")
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum ChimeraRuntimeFailure {
     VarNotFound(String, i32),
-    VarWrongType(String, String, i32),
+    VarWrongType(String, VarTypes, i32),
     TestFailure(String, i32)
 }
 
@@ -26,7 +41,7 @@ impl ChimeraRuntimeFailure {
         match self {
             ChimeraRuntimeFailure::TestFailure(msg, line) => eprintln!("FAILURE on line {}: {}", line, msg),
             ChimeraRuntimeFailure::VarNotFound(var_name, line) => eprintln!("ERROR on line {}: var {} was accessed but is not set", line, var_name),
-            ChimeraRuntimeFailure::VarWrongType(var_name, expected_type, line) => eprintln!("ERROR on line {}: var {} was expected to be of type {} but it was not", line, var_name, expected_type)
+            ChimeraRuntimeFailure::VarWrongType(var_name, expected_type, line) => eprintln!("ERROR on line {}: {} was expected to be of type {} but it was not", line, var_name, expected_type)
         }
     }
 }
