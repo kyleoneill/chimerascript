@@ -92,7 +92,7 @@ impl TestCase {
         }
     }
 
-    pub fn print_in_test(thing_to_print: &str, depth: i32) {
+    pub fn print_in_test(thing_to_print: &str, depth: u32) {
         for _ in 0..depth {
             print!(" ");
         }
@@ -100,7 +100,7 @@ impl TestCase {
     }
 
     /// Runs a test case
-    pub fn run_test_case(self, variable_map: &mut HashMap<String, AssignmentValue>, tests_passed: &mut i32, tests_failed: &mut i32, depth: i32) -> Result<TestResult, ChimeraRuntimeFailure> {
+    pub fn run_test_case(self, variable_map: &mut HashMap<String, AssignmentValue>, tests_passed: &mut i32, tests_failed: &mut i32, depth: u32) -> Result<TestResult, ChimeraRuntimeFailure> {
         let mut test_passed = true;
         Self::print_in_test(&format!("RUNNING TEST {}", self.name), depth);
 
@@ -158,7 +158,7 @@ impl TestCase {
                 *tests_passed += 1;
                 match self.expected_failure {
                     true =>  {
-                        println!("UNEXEPCTED SUCCESS");
+                        Self::print_in_test(&format!("TEST {} UNEXPECTED SUCCESS", self.name), depth);
                         Ok(TestResult::UnexpectedSuccess)
                     },
                     false =>  {
@@ -170,7 +170,7 @@ impl TestCase {
             false => {
                 match self.expected_failure {
                     true => {
-                        println!("EXPECTED FAILURE");
+                        Self::print_in_test(&format!("TEST {} EXPECTED FAILURE", self.name), depth);
                         *tests_passed += 1;
                         Ok(TestResult::ExpectedFailure)
                     },
@@ -276,62 +276,18 @@ impl TestLine {
         }
     }
 
-    pub fn run_line(self, variable_map: &mut HashMap<String, AssignmentValue>, context: &Context, depth: i32) -> Result<(), ChimeraRuntimeFailure> {
+    pub fn run_line(self, variable_map: &mut HashMap<String, AssignmentValue>, context: &Context, depth: u32) -> Result<(), ChimeraRuntimeFailure> {
         let syntax_tree = self.line;
         match syntax_tree.statement {
             Statement::AssertCommand(assert_command) => {
-                // TODO: We're passing a cloned copy of left/right here so we still have access
-                //       to the variables for error handling inside matching. Is there a way to
-                //       error handle without cloning?
-                let left_value = AssignmentValue::resolve_value(assert_command.left_value.clone(), variable_map, context)?;
-                let right_value = AssignmentValue::resolve_value(assert_command.right_value.clone(), variable_map, context)?;
-                let assertion_passed = match assert_command.subcommand {
-                    AssertSubCommand::EQUALS => { left_value == right_value },
-                    AssertSubCommand::STATUS => {
-                        // left needs to be a web response variable
-                        if !right_value.is_numeric() { return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.right_value.error_print(), VarTypes::Int, context.current_line)) }
-                        todo!()
-                    },
-                    _ => {
-                        // The remaining matches are the four relational operators, left_value and
-                        // right_value must be ints for all four
-                        if !left_value.is_numeric() { return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.left_value.error_print(), VarTypes::Int, context.current_line)) }
-                        if !right_value.is_numeric() { return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.right_value.error_print(), VarTypes::Int, context.current_line)) }
-                        match assert_command.subcommand {
-                            AssertSubCommand::GTE => {
-                                left_value.to_int() >= right_value.to_int()
-                            },
-                            AssertSubCommand::GT => {
-                                left_value.to_int() > right_value.to_int()
-                            },
-                            AssertSubCommand::LTE => {
-                                left_value.to_int() <= right_value.to_int()
-                            },
-                            AssertSubCommand::LT => {
-                                left_value.to_int() < right_value.to_int()
-                            }
-                            _ => panic!("Failed to handle an ASSERT subcommand case")
-                        }
-                    }
-                };
-                if assert_command.negate_assertion && assertion_passed {
-                    // Assertion was true but expected to be false
-                    return Err(ChimeraRuntimeFailure::TestFailure(format!("Expected {} to not {} {}", left_value, assert_command.subcommand, right_value), context.current_line))
-                }
-                else if !assert_command.negate_assertion && !assertion_passed {
-                    // Assertion was false but expected to be true
-                    return Err(ChimeraRuntimeFailure::TestFailure(format!("Expected {} to {} {}", left_value, assert_command.subcommand, right_value), context.current_line))
-                }
-                Ok(())
+                crate::commands::assert::assert_command(context, assert_command, variable_map)
             },
             Statement::AssignmentExpr(assert_expr) => {
                 // TODO
                 Ok(())
             },
             Statement::PrintCommand(print_cmd) => {
-                let resolved = AssignmentValue::resolve_value(print_cmd, variable_map, context)?;
-                TestCase::print_in_test(&format!("{}", resolved), depth);
-                Ok(())
+                crate::commands::print::print_command(context, print_cmd, variable_map, depth)
             },
             Statement::Expression(expr) => {
                 // TODO

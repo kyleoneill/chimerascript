@@ -1,6 +1,7 @@
 mod err_handle;
 mod frontend;
 mod abstract_syntax_tree;
+mod commands;
 
 use std::collections::HashMap;
 use err_handle::print_error;
