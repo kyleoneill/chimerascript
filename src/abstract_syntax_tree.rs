@@ -253,8 +253,8 @@ pub enum Statement {
 
 #[derive(Debug)]
 pub struct AssignmentExpr {
-    var_name: String,
-    expression: Expression
+    pub var_name: String,
+    pub expression: Expression
 }
 
 #[derive(Debug)]
