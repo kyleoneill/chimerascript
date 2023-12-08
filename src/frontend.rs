@@ -283,15 +283,17 @@ impl TestLine {
                 crate::commands::assert::assert_command(context, assert_command, variable_map)
             },
             Statement::AssignmentExpr(assert_expr) => {
-                // TODO
-                Ok(())
+                crate::commands::assignment::assignment_command(context, assert_expr, variable_map)
             },
             Statement::PrintCommand(print_cmd) => {
                 crate::commands::print::print_command(context, print_cmd, variable_map, depth)
             },
             Statement::Expression(expr) => {
-                // TODO
-                Ok(())
+                // We are running an expression without assigning it, we can toss the result
+                match crate::commands::expression::expression_command(context, expr) {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(e)
+                }
             }
         }
     }
