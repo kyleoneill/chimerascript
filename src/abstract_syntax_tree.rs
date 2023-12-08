@@ -402,19 +402,21 @@ impl std::fmt::Display for AssignmentValue {
 }
 
 impl AssignmentValue {
-    pub fn resolve_value(value: Value, variable_map: &HashMap<String, Self>, context: &Context) -> Result<Self, ChimeraRuntimeFailure> {
+    pub fn resolve_value(value: &Value, variable_map: &HashMap<String, Self>, context: &Context) -> Result<Self, ChimeraRuntimeFailure> {
         match value {
             Value::Literal(val) => {
-                Ok(Self::Literal(val))
+                Ok(Self::Literal(val.clone()))
             },
             Value::Variable(var_name) => {
                 // TODO: I need dot resolution, if var_name is something like (foo.bar.baz) then we are interested
                 //       in grabbing var foo and then seeking subfield bar.baz
-                match variable_map.get(&var_name) {
+                match variable_map.get(var_name) {
                     // TODO: Is there a way to make this return a ref instead? clone might be
-                    //       expensive for a web response
+                    //       expensive for a web response.
+                    //       I think I want to use a Cow here, as that is used for enums that can
+                    //       have variants which might be borrowed or owned
                     Some(res) => return Ok(res.clone()),
-                    None => Err(ChimeraRuntimeFailure::VarNotFound(var_name, context.current_line))
+                    None => Err(ChimeraRuntimeFailure::VarNotFound(var_name.to_owned(), context.current_line))
                 }
             }
         }
@@ -435,7 +437,7 @@ impl AssignmentValue {
         match self {
             Self::Literal(literal) => {
                 match literal {
-                    Literal::Str(str) => panic!("Tried to convert a Literal::String to an int"),
+                    Literal::Str(_str) => panic!("Tried to convert a Literal::String to an int"),
                     Literal::Bool(bool) => {
                         match bool {
                             true => 1,

@@ -7,8 +7,10 @@
     - `steps` variables should be accessible in `teardown`
 - Testing
   - frontend
-  - Actual behavior (once that feature is done)
-    - Move tests from AST to here? Just copy tests?
+  - Will need a locally run web server to run http commands against
+    - simple Python web server that is put up and torn down when running tests?
+      - Would need a script to run tests, script will create a web server,
+        then run rust tests, report rust test results, tear down server
   - Nested tests
   - Setup
   - Teardown

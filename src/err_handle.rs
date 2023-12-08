@@ -33,7 +33,8 @@ impl std::fmt::Display for VarTypes {
 pub enum ChimeraRuntimeFailure {
     VarNotFound(String, i32),
     VarWrongType(String, VarTypes, i32),
-    TestFailure(String, i32)
+    TestFailure(String, i32),
+    InternalError(String)
 }
 
 impl ChimeraRuntimeFailure {
@@ -41,7 +42,8 @@ impl ChimeraRuntimeFailure {
         match self {
             ChimeraRuntimeFailure::TestFailure(msg, line) => eprintln!("FAILURE on line {}: {}", line, msg),
             ChimeraRuntimeFailure::VarNotFound(var_name, line) => eprintln!("ERROR on line {}: var {} was accessed but is not set", line, var_name),
-            ChimeraRuntimeFailure::VarWrongType(var_name, expected_type, line) => eprintln!("ERROR on line {}: {} was expected to be of type {} but it was not", line, var_name, expected_type)
+            ChimeraRuntimeFailure::VarWrongType(var_name, expected_type, line) => eprintln!("ERROR on line {}: {} was expected to be of type {} but it was not", line, var_name, expected_type),
+            ChimeraRuntimeFailure::InternalError(action) => eprintln!("Internal error while {}", action)
         }
     }
 }
