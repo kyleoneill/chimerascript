@@ -4,7 +4,7 @@ app = Flask("simple-server")
 
 @app.route("/")
 def entry():
-    return '{"status":"online","nest":{"test":5}}'
+    return json.jsonify({"status":"online","nested_field":{"val":5}})
 
 @app.route("/test_resource", methods=["GET","PUT","POST","DELETE"])
 def test_resource():
@@ -40,4 +40,4 @@ def test_resource():
     elif request.method == "DELETE":
         return make_response("", 200)
     else:
-        return make_response('{"error":"unsupported method"}', 400)
+        return make_response(json.jsonify({"error":"unsupported method"}), 400)

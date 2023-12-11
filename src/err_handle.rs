@@ -34,7 +34,8 @@ pub enum ChimeraRuntimeFailure {
     VarNotFound(String, i32),
     VarWrongType(String, VarTypes, i32),
     TestFailure(String, i32),
-    InternalError(String)
+    InternalError(String),
+    WebRequestFailure(String, i32)
 }
 
 impl ChimeraRuntimeFailure {
@@ -43,7 +44,8 @@ impl ChimeraRuntimeFailure {
             ChimeraRuntimeFailure::TestFailure(msg, line) => eprintln!("FAILURE on line {}: {}", line, msg),
             ChimeraRuntimeFailure::VarNotFound(var_name, line) => eprintln!("ERROR on line {}: var {} was accessed but is not set", line, var_name),
             ChimeraRuntimeFailure::VarWrongType(var_name, expected_type, line) => eprintln!("ERROR on line {}: {} was expected to be of type {} but it was not", line, var_name, expected_type),
-            ChimeraRuntimeFailure::InternalError(action) => eprintln!("Internal error while {}", action)
+            ChimeraRuntimeFailure::InternalError(action) => eprintln!("Internal error while {}", action),
+            ChimeraRuntimeFailure::WebRequestFailure(endpoint, line) => eprintln!("ERROR on line {}: Failed to make request for endpoint '{}'", line, endpoint)
         }
     }
 }

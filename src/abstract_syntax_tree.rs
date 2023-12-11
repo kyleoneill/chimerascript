@@ -304,6 +304,30 @@ impl Value {
             Value::Variable(var_name) => format!("var {}", var_name.to_owned())
         }
     }
+
+    pub fn resolve(&self, context: &Context, variable_map: &HashMap<String, AssignmentValue>) -> Result<AssignmentValue, ChimeraRuntimeFailure> {
+        match self {
+            Value::Literal(val) => {
+                Ok(AssignmentValue::Literal(val.clone()))
+            },
+            Value::Variable(var_name) => {
+                // TODO: I need dot resolution, if var_name is something like (foo.bar.baz) then we are interested
+                //       in grabbing var foo and then seeking subfield bar.baz
+                // subfielding must also work for accessing nested JSON objects and
+                // indices for a LITERAL (when vec support is added?) list or a JSON list index access
+                // If accessor is a string, we must be accessing a JSON obj. If an int, we could be accessing a
+                // json key with a string int name (dumb) or a list index
+                match variable_map.get(var_name) {
+                    // TODO: Is there a way to make this return a ref instead? clone might be
+                    //       expensive for a web response.
+                    //       I think I want to use a Cow here, as that is used for enums that can
+                    //       have variants which might be borrowed or owned
+                    Some(res) => return Ok(res.clone()),
+                    None => Err(ChimeraRuntimeFailure::VarNotFound(var_name.to_owned(), context.current_line))
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -331,9 +355,9 @@ impl std::fmt::Display for AssertSubCommand {
 
 #[derive(Debug)]
 pub struct HttpCommand {
-    verb: HTTPVerb,
-    path: String,
-    http_assignments: Vec<HttpAssignment>,
+    pub verb: HTTPVerb,
+    pub path: String,
+    pub http_assignments: Vec<HttpAssignment>,
     key_val_pairs: Vec<KeyValuePair>
 }
 
@@ -351,8 +375,8 @@ impl From<Statement> for HttpCommand {
 
 #[derive(Debug)]
 pub struct HttpAssignment {
-    lhs: String,
-    rhs: Value
+    pub lhs: String,
+    pub rhs: Value
 }
 
 #[derive(Debug)]
@@ -389,8 +413,13 @@ pub enum HTTPVerb {
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub enum AssignmentValue {
     Literal(Literal),
-    // TODO: http request response
-    // TODO: json? maybe store that just as a str?
+    // TODO: Some web request response for a `- var foo = GET /endpoint`
+    // TODO: Some JSON object for setting a portion of a web response, ex
+    //       - var foo = GET /endpoint
+    //       - var status = (foo.status_code)
+    //       - var inner_body_thing = (foo.body.pizzas)
+    //         ^ this one might be a further JSON thing OR it might be a literal, like an int
+    //         ^ Will need to resolve this where we are pulling a val out of the var hashmap?
 }
 
 impl std::fmt::Display for AssignmentValue {
@@ -403,23 +432,7 @@ impl std::fmt::Display for AssignmentValue {
 
 impl AssignmentValue {
     pub fn resolve_value(value: &Value, variable_map: &HashMap<String, Self>, context: &Context) -> Result<Self, ChimeraRuntimeFailure> {
-        match value {
-            Value::Literal(val) => {
-                Ok(Self::Literal(val.clone()))
-            },
-            Value::Variable(var_name) => {
-                // TODO: I need dot resolution, if var_name is something like (foo.bar.baz) then we are interested
-                //       in grabbing var foo and then seeking subfield bar.baz
-                match variable_map.get(var_name) {
-                    // TODO: Is there a way to make this return a ref instead? clone might be
-                    //       expensive for a web response.
-                    //       I think I want to use a Cow here, as that is used for enums that can
-                    //       have variants which might be borrowed or owned
-                    Some(res) => return Ok(res.clone()),
-                    None => Err(ChimeraRuntimeFailure::VarNotFound(var_name.to_owned(), context.current_line))
-                }
-            }
-        }
+        value.resolve(context, variable_map)
     }
 
     pub fn is_numeric(&self) -> bool {
