@@ -1,4 +1,8 @@
+use std::num::ParseIntError;
 use serde_json::Value;
+use crate::abstract_syntax_tree::{AssignmentValue, Literal};
+use crate::err_handle::ChimeraRuntimeFailure;
+use crate::frontend::Context;
 
 pub fn serde_json_to_string(json_object: &Value) -> String {
     let mut str_build = String::new();
@@ -40,4 +44,60 @@ pub fn serde_json_to_string(json_object: &Value) -> String {
         }
     }
     str_build
+}
+
+pub fn access_json(json_value: &Value, accessors: &[&str], context: &Context) -> Result<AssignmentValue, ChimeraRuntimeFailure> {
+    // TODO: Will probably be hard but there SHOULD be a way to do this without cloning
+    //       cloning web requests might be extremely expensive
+    match access_json_by_key(json_value, accessors, context)? {
+        Value::Null => Ok(AssignmentValue::Literal(Literal::Null)),
+        Value::Bool(b) => Ok(AssignmentValue::Literal(Literal::Bool(*b))),
+        Value::Number(n) => {
+            // TODO: What if we have a number outside the i32 range, or a float? Make this a smarter check, maybe add more Literals to represent ints vs floats
+            if !n.is_i64() {
+                return Err(ChimeraRuntimeFailure::JsonBadNumberRead(context.current_line))
+            }
+            Ok(AssignmentValue::Literal(Literal::Int(n.as_i64().unwrap())))
+        },
+        Value::String(s) => Ok(AssignmentValue::Literal(Literal::Str(s.clone()))),
+        // TODO: When Literal::List is added this should check to see if the Value::Array contains all
+        //       primitives and, if so, convert it to a Literal::List. This might not be the case, like if
+        //       the Value::Array contains a Value::Object
+        Value::Array(a) => Ok(AssignmentValue::JsonValue(Value::Array(a.clone()))),
+        Value::Object(o) => Ok(AssignmentValue::JsonValue(Value::Object(o.clone())))
+    }
+}
+
+pub fn access_json_by_key<'a>(mut json_value: &'a Value, accessors: &[&str], context: &Context) -> Result<&'a Value, ChimeraRuntimeFailure> {
+    if accessors.len() == 0 {
+        return Err(ChimeraRuntimeFailure::InternalError("accessing a JSON object by key".to_owned()))
+    }
+    let last_index = accessors.len() - 1;
+    for (i, &accessor) in accessors.iter().enumerate() {
+        if i == last_index {
+            // This is the final accessor, which may return any of the Value variants
+        }
+        else {
+            // We still have more accessors after this one, so we must be accessing either an array or an object
+            // We cannot be accessing a leaf node
+            match json_value {
+                Value::Array(json_array) => {
+                    match accessor.parse::<usize>() {
+                        Ok(numerical_accessor) => {
+                            if numerical_accessor >= json_array.len() {
+                                return Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line))
+                            }
+                            json_value = &json_array[numerical_accessor];
+                        },
+                        Err(_) => return Err(ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))
+                    }
+                },
+                Value::Object(json_object) => {
+                    // LEFT OFF HERE
+                },
+                _ => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(None, accessor.to_owned(), context.current_line))
+            }
+        }
+    }
+    Err(ChimeraRuntimeFailure::InternalError("accessing a JSON object by key".to_owned()))
 }
