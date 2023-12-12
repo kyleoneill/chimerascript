@@ -33,7 +33,7 @@ KeyValuePair = ${ VariableNameAssignment ~ "=>" ~ Value } // repeatable optional
 HttpAssignment = ${ VariableNameAssignment ~ "=" ~ Value }
 
 // TODO: Will need to add variable support in here
-QuoteString = { "\"" ~ ASCII_ALPHA+ ~ "\"" }
+QuoteString = { "\"" ~ Str+ ~ "\"" }
 
 LiteralValue = { QuoteString | ASCII_DIGIT+ | "true" | "false" }
 

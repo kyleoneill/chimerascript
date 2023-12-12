@@ -2,18 +2,19 @@ mod err_handle;
 mod frontend;
 mod abstract_syntax_tree;
 mod commands;
+mod util;
 
 use std::collections::HashMap;
 use err_handle::print_error;
 
 extern crate reqwest;
 extern crate yaml_rust;
+extern crate serde_json;
 use std::fs;
 use std::path::Path;
-use std::cell::OnceCell;
+use std::sync::OnceLock;
 use clap::Parser;
 use yaml_rust::YamlLoader;
-use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure};
 
 const FILE_EXTENSION: &'static str = "chs";
 
@@ -30,7 +31,7 @@ struct Args {
     name: Option<String>
 }
 
-static WEB_REQUEST_DOMAIN: OnceCell<String> = OnceCell::new();
+static WEB_REQUEST_DOMAIN: OnceLock<String> = OnceLock::new();
 
 fn main() {
     let args = Args::parse();
