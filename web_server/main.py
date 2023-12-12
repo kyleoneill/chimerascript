@@ -4,7 +4,11 @@ app = Flask("simple-server")
 
 @app.route("/")
 def entry():
-    return '{"status":"online","nest":{"test":5}}'
+    return json.jsonify({"status":"online","nested_field":{"val":5}})
+
+@app.route("/no_response_body", methods=["GET"])
+def no_response_body():
+    return make_response("ok", 200)
 
 @app.route("/test_resource", methods=["GET","PUT","POST","DELETE"])
 def test_resource():
@@ -32,6 +36,7 @@ def test_resource():
     elif request.method == "POST":
         json_data = request.get_json()
         res = {}
+        print(json_data)
         for key in example:
             if key not in json_data:
                 return make_response(json.jsonify({"error":f"missing field {key}"}), 400)
@@ -40,4 +45,4 @@ def test_resource():
     elif request.method == "DELETE":
         return make_response("", 200)
     else:
-        return make_response('{"error":"unsupported method"}', 400)
+        return make_response(json.jsonify({"error":"unsupported method"}), 400)
