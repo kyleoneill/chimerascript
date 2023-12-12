@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::Formatter;
 use pest::iterators::{Pair, Pairs};
+use serde_json::Value as SerdeJsonValue;
 use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure};
 use crate::err_handle::ChimeraCompileError::FailedParseAST;
 use crate::frontend::{Rule, Context};
@@ -304,6 +305,30 @@ impl Value {
             Value::Variable(var_name) => format!("var {}", var_name.to_owned())
         }
     }
+
+    pub fn resolve(&self, context: &Context, variable_map: &HashMap<String, AssignmentValue>) -> Result<AssignmentValue, ChimeraRuntimeFailure> {
+        match self {
+            Value::Literal(val) => {
+                Ok(AssignmentValue::Literal(val.clone()))
+            },
+            Value::Variable(var_name) => {
+                // TODO: I need dot resolution, if var_name is something like (foo.bar.baz) then we are interested
+                //       in grabbing var foo and then seeking subfield bar.baz
+                // subfielding must also work for accessing nested JSON objects and
+                // indices for a LITERAL (when vec support is added?) list or a JSON list index access
+                // If accessor is a string, we must be accessing a JSON obj. If an int, we could be accessing a
+                // json key with a string int name (dumb) or a list index
+                match variable_map.get(var_name) {
+                    // TODO: Is there a way to make this return a ref instead? clone might be
+                    //       expensive for a web response.
+                    //       I think I want to use a Cow here, as that is used for enums that can
+                    //       have variants which might be borrowed or owned
+                    Some(res) => return Ok(res.clone()),
+                    None => Err(ChimeraRuntimeFailure::VarNotFound(var_name.to_owned(), context.current_line))
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -331,9 +356,9 @@ impl std::fmt::Display for AssertSubCommand {
 
 #[derive(Debug)]
 pub struct HttpCommand {
-    verb: HTTPVerb,
-    path: String,
-    http_assignments: Vec<HttpAssignment>,
+    pub verb: HTTPVerb,
+    pub path: String,
+    pub http_assignments: Vec<HttpAssignment>,
     key_val_pairs: Vec<KeyValuePair>
 }
 
@@ -351,8 +376,8 @@ impl From<Statement> for HttpCommand {
 
 #[derive(Debug)]
 pub struct HttpAssignment {
-    lhs: String,
-    rhs: Value
+    pub lhs: String,
+    pub rhs: Value
 }
 
 #[derive(Debug)]
@@ -386,40 +411,29 @@ pub enum HTTPVerb {
     DELETE
 }
 
-#[derive(PartialEq, Eq, Hash, Clone)]
+#[derive(Clone, PartialEq)]
 pub enum AssignmentValue {
     Literal(Literal),
-    // TODO: http request response
-    // TODO: json? maybe store that just as a str?
+    JsonValue(SerdeJsonValue),
+    HttpResponse(HttpResponse)
 }
 
 impl std::fmt::Display for AssignmentValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            AssignmentValue::Literal(literal) => write!(f, "{}", literal)
+            AssignmentValue::Literal(literal) => write!(f, "{}", literal),
+            AssignmentValue::HttpResponse(res) => write!(f, "HttpResponse_{}", res.status_code),
+            AssignmentValue::JsonValue(json_val) => {
+                let json_str = crate::util::serde_json_to_string(json_val);
+                write!(f, "{}", json_str)
+            }
         }
     }
 }
 
 impl AssignmentValue {
     pub fn resolve_value(value: &Value, variable_map: &HashMap<String, Self>, context: &Context) -> Result<Self, ChimeraRuntimeFailure> {
-        match value {
-            Value::Literal(val) => {
-                Ok(Self::Literal(val.clone()))
-            },
-            Value::Variable(var_name) => {
-                // TODO: I need dot resolution, if var_name is something like (foo.bar.baz) then we are interested
-                //       in grabbing var foo and then seeking subfield bar.baz
-                match variable_map.get(var_name) {
-                    // TODO: Is there a way to make this return a ref instead? clone might be
-                    //       expensive for a web response.
-                    //       I think I want to use a Cow here, as that is used for enums that can
-                    //       have variants which might be borrowed or owned
-                    Some(res) => return Ok(res.clone()),
-                    None => Err(ChimeraRuntimeFailure::VarNotFound(var_name.to_owned(), context.current_line))
-                }
-            }
-        }
+        value.resolve(context, variable_map)
     }
 
     pub fn is_numeric(&self) -> bool {
@@ -429,11 +443,19 @@ impl AssignmentValue {
                     Literal::Int(_) => true,
                     _ => false
                 }
+            },
+            Self::HttpResponse(_) => false,
+            Self::JsonValue(json_val) => {
+                match json_val {
+                    SerdeJsonValue::Number(_) => true,
+                    _ => false
+                }
             }
         }
     }
 
-    pub fn to_int(&self) -> i32 {
+    pub fn to_int(&self) -> i64 {
+        // TODO: Should this error instead of panic? Likely yes
         match self {
             Self::Literal(literal) => {
                 match literal {
@@ -444,11 +466,30 @@ impl AssignmentValue {
                             false => 0
                         }
                     },
-                    Literal::Int(int) => *int
+                    Literal::Int(int) => *int as i64
+                }
+            },
+            Self::HttpResponse(_) => panic!("Tried to convert a HttpResponse to an int"),
+            Self::JsonValue(json_val) => {
+                match json_val {
+                    SerdeJsonValue::Number(num) => {
+                        match num.as_i64() {
+                            Some(n) => n,
+                            None => panic!("Failed to convert a serde_json::Value Number to an i64")
+                        }
+                    },
+                    _ => panic!("Tried to convert a serde_json::Value to a num when it was not a Number")
                 }
             }
         }
     }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct HttpResponse {
+    // TODO: Store header data?
+    pub status_code: u16,
+    pub body: Option<SerdeJsonValue>
 }
 
 /*

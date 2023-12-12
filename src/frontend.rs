@@ -100,7 +100,7 @@ impl TestCase {
     }
 
     /// Runs a test case
-    pub fn run_test_case(self, variable_map: &mut HashMap<String, AssignmentValue>, tests_passed: &mut i32, tests_failed: &mut i32, depth: u32) -> Result<TestResult, ChimeraRuntimeFailure> {
+    pub fn run_test_case(self, variable_map: &mut HashMap<String, AssignmentValue>, tests_passed: &mut i32, tests_failed: &mut i32, depth: u32, web_client: &reqwest::blocking::Client) -> Result<TestResult, ChimeraRuntimeFailure> {
         let mut test_passed = true;
         Self::print_in_test(&format!("RUNNING TEST {}", self.name), depth);
 
@@ -126,7 +126,7 @@ impl TestCase {
                     //       printing right here. Might want to add some contextual error gatherer
                     //       struct or hashmap or something to display all errors at the end of the
                     //       run as well?
-                    match subtest.run_test_case(variable_map, tests_passed, tests_failed, depth + 1)? {
+                    match subtest.run_test_case(variable_map, tests_passed, tests_failed, depth + 1, web_client)? {
                         TestResult::Failed => {
                             test_passed = false;
                         },
@@ -134,7 +134,7 @@ impl TestCase {
                     }
                 },
                 Operation::Line(test_line) => {
-                    match test_line.run_line(variable_map, &context, depth) {
+                    match test_line.run_line(variable_map, &context, depth, web_client) {
                         Ok(_) => (),
                         Err(e) => {
                             // TODO: RUN TEARDOWN HERE NOW
@@ -276,21 +276,21 @@ impl TestLine {
         }
     }
 
-    pub fn run_line(self, variable_map: &mut HashMap<String, AssignmentValue>, context: &Context, depth: u32) -> Result<(), ChimeraRuntimeFailure> {
+    pub fn run_line(self, variable_map: &mut HashMap<String, AssignmentValue>, context: &Context, depth: u32, web_client: &reqwest::blocking::Client) -> Result<(), ChimeraRuntimeFailure> {
         let syntax_tree = self.line;
         match syntax_tree.statement {
             Statement::AssertCommand(assert_command) => {
                 crate::commands::assert::assert_command(context, assert_command, variable_map)
             },
             Statement::AssignmentExpr(assert_expr) => {
-                crate::commands::assignment::assignment_command(context, assert_expr, variable_map)
+                crate::commands::assignment::assignment_command(context, assert_expr, variable_map, web_client)
             },
             Statement::PrintCommand(print_cmd) => {
                 crate::commands::print::print_command(context, print_cmd, variable_map, depth)
             },
             Statement::Expression(expr) => {
                 // We are running an expression without assigning it, we can toss the result
-                match crate::commands::expression::expression_command(context, expr) {
+                match crate::commands::expression::expression_command(context, expr, variable_map, web_client) {
                     Ok(_) => Ok(()),
                     Err(e) => Err(e)
                 }

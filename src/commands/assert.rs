@@ -9,7 +9,8 @@ pub fn assert_command(context: &Context, assert_command: AssertCommand, variable
     let assertion_passed = match assert_command.subcommand {
         AssertSubCommand::EQUALS => { left_value == right_value },
         AssertSubCommand::STATUS => {
-            // left needs to be a web response variable
+            // left needs to be AssignmentValue::HttpResponse
+            // TODO: Make helper functions on AssignmentValue to resolve it, like AssignmentValue::get_http_response(&self) -> Result<HttpResponse, ChimeraRuntimeError>
             if !right_value.is_numeric() { return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.right_value.error_print(), VarTypes::Int, context.current_line)) }
             todo!()
         },
