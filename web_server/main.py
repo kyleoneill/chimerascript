@@ -6,6 +6,10 @@ app = Flask("simple-server")
 def entry():
     return json.jsonify({"status":"online","nested_field":{"val":5}})
 
+@app.route("/no_response_body", methods=["GET"])
+def no_response_body():
+    return make_response("ok", 200)
+
 @app.route("/test_resource", methods=["GET","PUT","POST","DELETE"])
 def test_resource():
     example = {
@@ -32,6 +36,7 @@ def test_resource():
     elif request.method == "POST":
         json_data = request.get_json()
         res = {}
+        print(json_data)
         for key in example:
             if key not in json_data:
                 return make_response(json.jsonify({"error":f"missing field {key}"}), 400)

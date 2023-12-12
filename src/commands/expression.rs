@@ -3,7 +3,8 @@ use crate::abstract_syntax_tree::{AssignmentValue, Expression};
 use crate::err_handle::ChimeraRuntimeFailure;
 use crate::frontend::Context;
 use crate::WEB_REQUEST_DOMAIN;
-use crate::abstract_syntax_tree::HTTPVerb;
+use crate::abstract_syntax_tree::{HTTPVerb, HttpResponse};
+use serde_json::Value;
 
 pub fn expression_command(context: &Context, expression: Expression, variable_map: &mut HashMap<String, AssignmentValue>, web_client: &reqwest::blocking::Client) -> Result<AssignmentValue, ChimeraRuntimeFailure> {
     match expression {
@@ -16,22 +17,17 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
             let mut resolved_path: String = domain.clone();
             resolved_path.push_str(http_command.path.as_str());
 
-            // Add our query params to the request URL
-            let mut has_added_a_param = false;
-            for param_pair in http_command.http_assignments {
-                let pair_key = param_pair.lhs;
-                let pair_val = param_pair.rhs.resolve(context, variable_map)?.to_string();
-                // TODO: Convert pair_val with URL escapes
-                //       ex, space must be replaced with %20
-                if !has_added_a_param {
-                    let formatted = format!("?{}={}", pair_key, pair_val);
-                    resolved_path.push_str(formatted.as_str());
-                    has_added_a_param = true;
-                }
-                else {
-                    let formatted = format!("&{}={}", pair_key, pair_val);
-                    resolved_path.push_str(formatted.as_str());
-                }
+            // TODO: need to go through resolved_path and URL escape anything that has to be
+            //       escaped, ex space has to be replaced with %20
+            // TODO: need to go through resolved_path and fill in any variable query params, ex
+            //       - GET /foo?count=(my_count_var)
+
+            // construct request body
+            let mut body_map: HashMap<String, String> = HashMap::new();
+            for assignment in http_command.http_assignments {
+                let key = assignment.lhs;
+                let val = assignment.rhs.resolve(context, variable_map)?.to_string();
+                body_map.insert(key, val);
             }
 
             // Make the web request
@@ -40,20 +36,19 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                     web_client.get(resolved_path).send()
                 },
                 HTTPVerb::DELETE => {
-
+                    web_client.delete(resolved_path).send()
                 },
                 HTTPVerb::POST => {
-                    // TODO: Body params
+                    web_client.post(resolved_path).json(&body_map).send()
                 },
                 HTTPVerb::PUT => {
-                    // TODO: Body params
+                    web_client.post(resolved_path).json(&body_map).send()
                 }
             };
             match res {
-                Ok(successful_res) => {
-                    todo!()
-                    // convert this into an AssignmentValue
-                    // have to add some new type to represent the val here
+                Ok(response) => {
+                    let http_response = HttpResponse{ status_code: response.status().as_u16(), body: response.json().ok() };
+                    Ok(AssignmentValue::HttpResponse(http_response))
                 },
                 Err(_) => Err(ChimeraRuntimeFailure::WebRequestFailure(http_command.path.clone(), context.current_line))
             }
