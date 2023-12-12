@@ -47,7 +47,11 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
             };
             match res {
                 Ok(response) => {
-                    let http_response = HttpResponse{ status_code: response.status().as_u16(), body: response.json().ok() };
+                    let body: Value = match response.json() {
+                        Ok(resolved_body) => resolved_body,
+                        Err(_) => Value::Null
+                    };
+                    let http_response = HttpResponse{ status_code: response.status().as_u16(), body };
                     Ok(AssignmentValue::HttpResponse(http_response))
                 },
                 Err(_) => Err(ChimeraRuntimeFailure::WebRequestFailure(http_command.path.clone(), context.current_line))
