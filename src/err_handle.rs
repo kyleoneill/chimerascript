@@ -18,13 +18,15 @@ impl ChimeraCompileError {
 
 #[derive(Debug)]
 pub enum VarTypes {
-    Int
+    Int,
+    HttpResponse
 }
 
 impl std::fmt::Display for VarTypes {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            VarTypes::Int => write!(f, "int")
+            VarTypes::Int => write!(f, "int"),
+            VarTypes::HttpResponse => write!(f, "HttpResponse")
         }
     }
 }
@@ -35,17 +37,35 @@ pub enum ChimeraRuntimeFailure {
     VarWrongType(String, VarTypes, i32),
     TestFailure(String, i32),
     InternalError(String),
-    WebRequestFailure(String, i32)
+    WebRequestFailure(String, i32),
+    BadSubfieldAccess(Option<String>, String, i32),
+    JsonBadNumberRead(i32),
+    TriedToIndexWithNonNumber(i32),
+    OutOfBounds(i32)
 }
 
 impl ChimeraRuntimeFailure {
     pub fn print_error(&self) {
         match self {
+            // TODO: There are now a lot of runtime failure variants. These should probably be broken up into different runtime categories
+            //       like "array access" errors for TriedToIndexWithNonNumber and OutOfBounds or "variable errors" for
+            //       VarNotFound, VarWrongType, and BadSubfieldAccess
             ChimeraRuntimeFailure::TestFailure(msg, line) => eprintln!("FAILURE on line {}: {}", line, msg),
             ChimeraRuntimeFailure::VarNotFound(var_name, line) => eprintln!("ERROR on line {}: var {} was accessed but is not set", line, var_name),
             ChimeraRuntimeFailure::VarWrongType(var_name, expected_type, line) => eprintln!("ERROR on line {}: {} was expected to be of type {} but it was not", line, var_name, expected_type),
             ChimeraRuntimeFailure::InternalError(action) => eprintln!("Internal error while {}", action),
-            ChimeraRuntimeFailure::WebRequestFailure(endpoint, line) => eprintln!("ERROR on line {}: Failed to make request for endpoint '{}'", line, endpoint)
+            ChimeraRuntimeFailure::WebRequestFailure(endpoint, line) => eprintln!("ERROR on line {}: Failed to make request for endpoint '{}'", line, endpoint),
+            ChimeraRuntimeFailure::BadSubfieldAccess(var_name, subfield, line) => {
+                // This is not ideal, should fix it later. Issue here is passing around the variable name through helper functions which do not need
+                // the original variable name JUST so we can error handle
+                match var_name {
+                    Some(v_name) => eprintln!("ERROR on line {}: Failed to access subfield {} for variable {}", line, subfield, v_name),
+                    None => eprintln!("ERROR on line {}: Failed to access subfield {}", line, subfield)
+                }
+            },
+            ChimeraRuntimeFailure::JsonBadNumberRead(line) => eprintln!("ERROR on line {}: Tried to read a JSON number which cannot be represented by a supported number field", line),
+            ChimeraRuntimeFailure::TriedToIndexWithNonNumber(line) => eprintln!("ERROR on line {}: Tried to index an array with a non-numerical value", line),
+            ChimeraRuntimeFailure::OutOfBounds(line) => eprintln!("ERROR on line {}: Tried to access an array with an out-of-bounds value", line)
         }
     }
 }

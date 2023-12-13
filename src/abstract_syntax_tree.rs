@@ -149,7 +149,7 @@ impl ChimeraScriptAST {
     fn parse_rule_to_literal_value(pair: Pair<Rule>) -> Result<Literal, ChimeraCompileError> {
         // A literal can be an int, a bool, or a string. Check to see if it's an int
         // or bool before setting it to be a string
-        match pair.as_str().parse::<i32>() {
+        match pair.as_str().parse::<i64>() {
             Ok(res) => return Ok(Literal::Int(res)),
             Err(_) => ()
         };
@@ -312,19 +312,47 @@ impl Value {
                 Ok(AssignmentValue::Literal(val.clone()))
             },
             Value::Variable(var_name) => {
-                // TODO: I need dot resolution, if var_name is something like (foo.bar.baz) then we are interested
-                //       in grabbing var foo and then seeking subfield bar.baz
-                // subfielding must also work for accessing nested JSON objects and
-                // indices for a LITERAL (when vec support is added?) list or a JSON list index access
-                // If accessor is a string, we must be accessing a JSON obj. If an int, we could be accessing a
-                // json key with a string int name (dumb) or a list index
-                match variable_map.get(var_name) {
-                    // TODO: Is there a way to make this return a ref instead? clone might be
-                    //       expensive for a web response.
-                    //       I think I want to use a Cow here, as that is used for enums that can
-                    //       have variants which might be borrowed or owned
-                    Some(res) => return Ok(res.clone()),
-                    None => Err(ChimeraRuntimeFailure::VarNotFound(var_name.to_owned(), context.current_line))
+                let accessors: Vec<&str> = var_name.split(".").collect();
+                let value = match variable_map.get(accessors[0]) {
+                    Some(res) => res,
+                    None => return Err(ChimeraRuntimeFailure::VarNotFound(var_name.to_owned(), context.current_line))
+                };
+                // TODO: Is there a way to make this method return a ref? clone might be
+                //       expensive for large AssignmentValues, like for a big web response.
+                //       I think I want to use a Cow here, as that is used for enums that can
+                //       have variants which might be borrowed or owned
+                if accessors.len() == 1 {
+                    return Ok(value.clone())
+                }
+                else {
+                    match value {
+                        AssignmentValue::Literal(_literal) => {
+                            // TODO: Add support here for indexing a Literal::List when that's added
+                            Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(accessors[0].to_string()), accessors[1].to_string(), context.current_line))
+                        },
+                        AssignmentValue::HttpResponse(http_response) => {
+                            match accessors[1] {
+                                "status_code" => {
+                                    if accessors.len() != 2 {
+                                        return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(accessors[0].to_string()), accessors[2].to_string(), context.current_line))
+                                    }
+                                    Ok(AssignmentValue::Literal(Literal::Int(http_response.status_code as i64)))
+                                },
+                                "body" => {
+                                    if accessors.len() == 2 {
+                                        Ok(AssignmentValue::JsonValue(http_response.body.clone()))
+                                    }
+                                    else {
+                                        crate::util::access_json(&http_response.body, &accessors[2..], context)
+                                    }
+                                },
+                                _ => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(accessors[0].to_string()), accessors[1].to_string(), context.current_line))
+                            }
+                        },
+                        AssignmentValue::JsonValue(json_val) => {
+                            crate::util::access_json(json_val, &accessors[1..], context)
+                        }
+                    }
                 }
             }
         }
@@ -388,9 +416,11 @@ pub struct KeyValuePair {
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum Literal {
+    // TODO: Add support for a List(Vec<Self>)
     Str(String),
-    Int(i32),
-    Bool(bool)
+    Int(i64),
+    Bool(bool),
+    Null
 }
 
 impl std::fmt::Display for Literal {
@@ -398,7 +428,8 @@ impl std::fmt::Display for Literal {
         match self {
             Literal::Str(str) => write!(f, "{}", str),
             Literal::Int(int) => write!(f, "{}", int),
-            Literal::Bool(bool) => write!(f, "{}", bool)
+            Literal::Bool(bool) => write!(f, "{}", bool),
+            Literal::Null => write!(f, "<null>")
         }
     }
 }
@@ -414,7 +445,11 @@ pub enum HTTPVerb {
 #[derive(Clone, PartialEq)]
 pub enum AssignmentValue {
     Literal(Literal),
+    // TODO: We should be storing a serde_json::Value::Object here rather than a serde_json::Value,
+    //       that way literals can only ever be represented in one way (my Literal variant)
     JsonValue(SerdeJsonValue),
+    // TODO: Will also need a new variant like JsonArray for serde_json::Value::Array if the array contains
+    //       maps and cannot be represented as a Literal::List when that is implemented
     HttpResponse(HttpResponse)
 }
 
@@ -422,7 +457,7 @@ impl std::fmt::Display for AssignmentValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             AssignmentValue::Literal(literal) => write!(f, "{}", literal),
-            AssignmentValue::HttpResponse(res) => write!(f, "HttpResponse_{}", res.status_code),
+            AssignmentValue::HttpResponse(res) => write!(f, "var {}", res.var_name),
             AssignmentValue::JsonValue(json_val) => {
                 let json_str = crate::util::serde_json_to_string(json_val);
                 write!(f, "{}", json_str)
@@ -455,7 +490,7 @@ impl AssignmentValue {
     }
 
     pub fn to_int(&self) -> i64 {
-        // TODO: Should this error instead of panic? Likely yes
+        // TODO: Fold is_numeric into this method and have it return a Result<i64, ChimeraruntimeError>
         match self {
             Self::Literal(literal) => {
                 match literal {
@@ -466,7 +501,8 @@ impl AssignmentValue {
                             false => 0
                         }
                     },
-                    Literal::Int(int) => *int as i64
+                    Literal::Int(int) => *int as i64,
+                    Literal::Null => panic!("Tried to convert a null value to an int")
                 }
             },
             Self::HttpResponse(_) => panic!("Tried to convert a HttpResponse to an int"),
@@ -489,7 +525,8 @@ impl AssignmentValue {
 pub struct HttpResponse {
     // TODO: Store header data?
     pub status_code: u16,
-    pub body: Option<SerdeJsonValue>
+    pub body: SerdeJsonValue,
+    pub var_name: String
 }
 
 /*

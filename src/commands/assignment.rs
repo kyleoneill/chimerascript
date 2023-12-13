@@ -5,7 +5,7 @@ use crate::frontend::Context;
 
 pub fn assignment_command(context: &Context, assignment_command: AssignmentExpr, variable_map: &mut HashMap<String, AssignmentValue>, web_client: &reqwest::blocking::Client) -> Result<(), ChimeraRuntimeFailure> {
     let var_name = assignment_command.var_name;
-    let val_to_store = crate::commands::expression::expression_command(context, assignment_command.expression, variable_map, web_client)?;
+    let val_to_store = crate::commands::expression::expression_command(context, assignment_command.expression, variable_map, web_client, Some(var_name.clone()))?;
     variable_map.insert(var_name, val_to_store);
     Ok(())
 }

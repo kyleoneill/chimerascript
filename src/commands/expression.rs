@@ -6,7 +6,7 @@ use crate::WEB_REQUEST_DOMAIN;
 use crate::abstract_syntax_tree::{HTTPVerb, HttpResponse};
 use serde_json::Value;
 
-pub fn expression_command(context: &Context, expression: Expression, variable_map: &mut HashMap<String, AssignmentValue>, web_client: &reqwest::blocking::Client) -> Result<AssignmentValue, ChimeraRuntimeFailure> {
+pub fn expression_command(context: &Context, expression: Expression, variable_map: &mut HashMap<String, AssignmentValue>, web_client: &reqwest::blocking::Client, variable_name: Option<String>) -> Result<AssignmentValue, ChimeraRuntimeFailure> {
     match expression {
         Expression::LiteralExpression(literal) => {
             Ok(AssignmentValue::Literal(literal))
@@ -47,7 +47,13 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
             };
             match res {
                 Ok(response) => {
-                    let http_response = HttpResponse{ status_code: response.status().as_u16(), body: response.json().ok() };
+                    // Have to store the status here as reading the body consumes the response
+                    let status_code = response.status().as_u16();
+                    let body: Value = match response.json() {
+                        Ok(resolved_body) => resolved_body,
+                        Err(_) => Value::Null
+                    };
+                    let http_response = HttpResponse{ status_code, body, var_name: variable_name.expect("Resolved an expression to set a variable without passing the variable name") };
                     Ok(AssignmentValue::HttpResponse(http_response))
                 },
                 Err(_) => Err(ChimeraRuntimeFailure::WebRequestFailure(http_command.path.clone(), context.current_line))

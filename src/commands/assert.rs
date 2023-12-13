@@ -7,12 +7,16 @@ pub fn assert_command(context: &Context, assert_command: AssertCommand, variable
     let left_value = AssignmentValue::resolve_value(&assert_command.left_value, variable_map, context)?;
     let right_value = AssignmentValue::resolve_value(&assert_command.right_value, variable_map, context)?;
     let assertion_passed = match assert_command.subcommand {
+        // TODO: ASSERT LENGTH, left value has to be a serde_json::Value::Array or a Literal::List when implemented, right has to be a num
         AssertSubCommand::EQUALS => { left_value == right_value },
         AssertSubCommand::STATUS => {
-            // left needs to be AssignmentValue::HttpResponse
-            // TODO: Make helper functions on AssignmentValue to resolve it, like AssignmentValue::get_http_response(&self) -> Result<HttpResponse, ChimeraRuntimeError>
-            if !right_value.is_numeric() { return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.right_value.error_print(), VarTypes::Int, context.current_line)) }
-            todo!()
+            match left_value {
+                AssignmentValue::HttpResponse(ref http_response) => {
+                    if !right_value.is_numeric() { return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.right_value.error_print(), VarTypes::Int, context.current_line)) }
+                    http_response.status_code as i64 == right_value.to_int()
+                },
+                _ => return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.left_value.error_print(), VarTypes::HttpResponse, context.current_line))
+            }
         },
         _ => {
             // The remaining matches are the four relational operators, left_value and
