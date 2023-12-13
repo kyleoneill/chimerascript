@@ -1,4 +1,3 @@
-use std::num::ParseIntError;
 use serde_json::Value;
 use crate::abstract_syntax_tree::{AssignmentValue, Literal};
 use crate::err_handle::ChimeraRuntimeFailure;
@@ -49,6 +48,7 @@ pub fn serde_json_to_string(json_object: &Value) -> String {
 pub fn access_json(json_value: &Value, accessors: &[&str], context: &Context) -> Result<AssignmentValue, ChimeraRuntimeFailure> {
     // TODO: Will probably be hard but there SHOULD be a way to do this without cloning
     //       cloning web requests might be extremely expensive
+    //       Repeated usage of large requests is going to result in a lot of expensive cloning
     match access_json_by_key(json_value, accessors, context)? {
         Value::Null => Ok(AssignmentValue::Literal(Literal::Null)),
         Value::Bool(b) => Ok(AssignmentValue::Literal(Literal::Bool(*b))),
@@ -74,29 +74,30 @@ pub fn access_json_by_key<'a>(mut json_value: &'a Value, accessors: &[&str], con
     }
     let last_index = accessors.len() - 1;
     for (i, &accessor) in accessors.iter().enumerate() {
-        if i == last_index {
-            // This is the final accessor, which may return any of the Value variants
+        match json_value {
+            Value::Array(json_array) => {
+                match accessor.parse::<usize>() {
+                    Ok(numerical_accessor) => {
+                        if numerical_accessor >= json_array.len() {
+                            return Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line))
+                        }
+                        json_value = &json_array[numerical_accessor];
+                    },
+                    Err(_) => return Err(ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))
+                }
+            },
+            Value::Object(json_object) => {
+                match json_object.get(accessor) {
+                    Some(read_value) => {
+                        json_value = read_value;
+                    },
+                    None => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(None, accessor.to_owned(), context.current_line))
+                }
+            },
+            _ => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(None, accessor.to_owned(), context.current_line))
         }
-        else {
-            // We still have more accessors after this one, so we must be accessing either an array or an object
-            // We cannot be accessing a leaf node
-            match json_value {
-                Value::Array(json_array) => {
-                    match accessor.parse::<usize>() {
-                        Ok(numerical_accessor) => {
-                            if numerical_accessor >= json_array.len() {
-                                return Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line))
-                            }
-                            json_value = &json_array[numerical_accessor];
-                        },
-                        Err(_) => return Err(ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))
-                    }
-                },
-                Value::Object(json_object) => {
-                    // LEFT OFF HERE
-                },
-                _ => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(None, accessor.to_owned(), context.current_line))
-            }
+        if i == last_index {
+            return Ok(json_value);
         }
     }
     Err(ChimeraRuntimeFailure::InternalError("accessing a JSON object by key".to_owned()))

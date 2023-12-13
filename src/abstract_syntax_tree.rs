@@ -149,7 +149,7 @@ impl ChimeraScriptAST {
     fn parse_rule_to_literal_value(pair: Pair<Rule>) -> Result<Literal, ChimeraCompileError> {
         // A literal can be an int, a bool, or a string. Check to see if it's an int
         // or bool before setting it to be a string
-        match pair.as_str().parse::<i32>() {
+        match pair.as_str().parse::<i64>() {
             Ok(res) => return Ok(Literal::Int(res)),
             Err(_) => ()
         };
@@ -336,11 +336,11 @@ impl Value {
                                     if accessors.len() != 2 {
                                         return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(accessors[0].to_string()), accessors[2].to_string(), context.current_line))
                                     }
-                                    AssignmentValue::Literal(Literal::Int(http_response.status_code as i64))
+                                    Ok(AssignmentValue::Literal(Literal::Int(http_response.status_code as i64)))
                                 },
                                 "body" => {
                                     if accessors.len() == 2 {
-                                        AssignmentValue::JsonValue(http_response.body.clone())
+                                        Ok(AssignmentValue::JsonValue(http_response.body.clone()))
                                     }
                                     else {
                                         crate::util::access_json(&http_response.body, &accessors[2..], context)
@@ -457,7 +457,7 @@ impl std::fmt::Display for AssignmentValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             AssignmentValue::Literal(literal) => write!(f, "{}", literal),
-            AssignmentValue::HttpResponse(res) => write!(f, "HttpResponse_{}", res.status_code),
+            AssignmentValue::HttpResponse(res) => write!(f, "var {}", res.var_name),
             AssignmentValue::JsonValue(json_val) => {
                 let json_str = crate::util::serde_json_to_string(json_val);
                 write!(f, "{}", json_str)
@@ -525,7 +525,8 @@ impl AssignmentValue {
 pub struct HttpResponse {
     // TODO: Store header data?
     pub status_code: u16,
-    pub body: SerdeJsonValue
+    pub body: SerdeJsonValue,
+    pub var_name: String
 }
 
 /*

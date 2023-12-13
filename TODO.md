@@ -16,10 +16,25 @@
       - Ex, test has a line to make a request to `http://localhost:5000/some_endpoint` with query and body
         params. The harness can intercept this request and just return what the web service is expected
         to return from the request to the test
-  - Nested tests
   - Setup
   - Teardown
     - Teardown running when the test fails
+  - Basic functionality
+    - Nested tests
+    - Variable assignment
+      - Literal
+      - HttpWeb
+    - Variable access
+      - Access variable subfield
+      - Trying to access variable that does not exist
+      - Trying to access an invalid subfield of a variable
+      - Trying to access a list with a non int index
+    - Negated assertion (ASSERT NOT)
+    - PRINT
+      - Both just a passed value and variables
+    - Standalone expression
+      - Literal (no-op?)
+      - HttpWeb
 - Ability to send Http requests to full paths so requests can go to endpoints
   other than just the one specified in config
 - Support for comments
