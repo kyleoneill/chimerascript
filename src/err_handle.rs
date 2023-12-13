@@ -18,13 +18,15 @@ impl ChimeraCompileError {
 
 #[derive(Debug)]
 pub enum VarTypes {
-    Int
+    Int,
+    HttpResponse
 }
 
 impl std::fmt::Display for VarTypes {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            VarTypes::Int => write!(f, "int")
+            VarTypes::Int => write!(f, "int"),
+            VarTypes::HttpResponse => write!(f, "HttpResponse")
         }
     }
 }
