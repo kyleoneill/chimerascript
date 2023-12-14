@@ -37,7 +37,7 @@ pub fn serde_json_to_string(json_object: &Value) -> String {
         Value::Object(json_obj) => {
             for (key, val) in json_obj.iter() {
                 let val_string = serde_json_to_string(val);
-                let mut b_string = format!("{{\"{}}}\":\"{{{}}}\"", key, val_string);
+                let b_string = format!("{{\"{}}}\":\"{{{}}}\"", key, val_string);
                 str_build.push_str(b_string.as_str());
             }
         }

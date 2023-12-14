@@ -3,8 +3,9 @@ use pest::error::InputLocation;
 use pest::Parser;
 use pest_derive::Parser;
 use yaml_rust::Yaml;
-use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure, VarTypes};
+use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure};
 use crate::abstract_syntax_tree::*;
+use crate::{abstract_syntax_tree, WEB_REQUEST_DOMAIN};
 
 pub struct Context {
     pub current_line: i32,
@@ -97,6 +98,22 @@ impl TestCase {
             print!(" ");
         }
         println!("{}", thing_to_print);
+    }
+
+    pub fn run_outermost_test_case(tests: Vec<Self>, web_client: &reqwest::blocking::Client) -> (i32, i32) {
+        let mut tests_passed = 0;
+        let mut tests_failed = 0;
+        for test in tests {
+            let mut test_case_variables: HashMap<String, abstract_syntax_tree::AssignmentValue> = HashMap::new();
+            match test.run_test_case(&mut test_case_variables, &mut tests_passed, &mut tests_failed, 1, &web_client) {
+                Ok(_) => continue,
+                Err(err) => {
+                    err.print_error();
+                    break;
+                }
+            }
+        }
+        (tests_passed, tests_failed)
     }
 
     /// Runs a test case

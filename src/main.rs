@@ -3,6 +3,7 @@ mod frontend;
 mod abstract_syntax_tree;
 mod commands;
 mod util;
+mod testing;
 
 use std::collections::HashMap;
 use err_handle::print_error;
@@ -15,6 +16,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 use clap::Parser;
 use yaml_rust::YamlLoader;
+use crate::frontend::TestCase;
 
 const FILE_EXTENSION: &'static str = "chs";
 
@@ -57,41 +59,38 @@ fn main() {
         return;
     }
     let file_contents = file_contents.unwrap();
+
+    // TODO: make a client builder here, configure it, then build the client
+    // TODO: I should use a global to store the web client so I can access it from
+    //       anywhere without passing it through a bunch of functions that don't need it
+    //       see what was done a few lines below for the domain
+    //       Will need to figure out if we want the client to be set once here like the domain
+    //       or modified later at some point, ex like changing the timeout it uses for a request
+    let web_client = reqwest::blocking::Client::new();
+    // Set the domain for our web requests
+    // TODO: Set this from a config value
+    WEB_REQUEST_DOMAIN.set("http://127.0.0.1:5000".to_owned()).expect("Failed to set static global for web domain");
+
     let test_file = YamlLoader::load_from_str(&file_contents);
     match test_file {
         Ok(mut file_yaml) => {
-            match frontend::iterate_yaml(file_yaml.remove(0)) {
-                Ok(tests) => {
-                    let mut tests_passed = 0;
-                    let mut tests_failed = 0;
-                    // TODO: make a client builder here, configure it, then build the client
-                    // TODO: I should use a global to store the web client so I can access it from
-                    //       anywhere without passing it through a bunch of functions that don't need it
-                    //       see what was done a few lines below for the domain
-                    //       Will need to figure out if we want the client to be set once here like the domain
-                    //       or modified later at some point, ex like changing the timeout it uses for a request
-                    let web_client = reqwest::blocking::Client::new();
-                    // Set the domain for our web requests
-                    // TODO: Set this from a config value
-                    WEB_REQUEST_DOMAIN.set("http://127.0.0.1:5000".to_owned()).expect("Failed to set static global for web domain");
-                    println!("RUNNING TESTS");
-                    for test in tests {
-                        let mut test_case_variables: HashMap<String, abstract_syntax_tree::AssignmentValue> = HashMap::new();
-                        match test.run_test_case(&mut test_case_variables, &mut tests_passed, &mut tests_failed, 1, &web_client) {
-                            Ok(_) => continue,
-                            Err(err) => {
-                                err.print_error();
-                                break;
-                            }
-                        }
+            println!("RUNNING TESTS");
+            let mut tests_passed = 0;
+            let mut tests_failed = 0;
+            for yaml in file_yaml {
+                match frontend::iterate_yaml(yaml) {
+                    Ok(tests) => {
+                        let res = TestCase::run_outermost_test_case(tests, &web_client);
+                        tests_passed += res.0;
+                        tests_failed += res.1;
                     }
-                    let overall_result = if tests_failed == 0 {"PASSED"} else {"FAILED"};
-                    println!("TEST {} WITH {} SUCCESSES AND {} FAILURES", overall_result, tests_passed, tests_failed);
-                }
-                Err(err) => {
-                    err.print_error();
+                    Err(err) => {
+                        err.print_error();
+                    }
                 }
             }
+            let overall_result = if tests_failed == 0 {"PASSED"} else {"FAILED"};
+            println!("TEST {} WITH {} SUCCESSES AND {} FAILURES", overall_result, tests_passed, tests_failed);
         },
         Err(e) => {
             let marker = e.marker();

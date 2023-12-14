@@ -526,6 +526,7 @@ pub struct HttpResponse {
     // TODO: Store header data?
     pub status_code: u16,
     pub body: SerdeJsonValue,
+    // TODO: Resolve error handling better, this adds code smell and this field shouldn't be here
     pub var_name: String
 }
 
@@ -536,7 +537,7 @@ Here be testing
  */
 
 #[cfg(test)]
-mod tests {
+mod ast_tests {
     use pest::Parser;
     use crate::frontend::CScriptTokenPairs;
     use super::*;
