@@ -5,7 +5,6 @@ mod commands;
 mod util;
 mod testing;
 
-use std::collections::HashMap;
 use err_handle::print_error;
 
 extern crate reqwest;
@@ -53,12 +52,13 @@ fn main() {
         return
     }
 
-    let file_contents = fs::read_to_string(&args.path);
-    if file_contents.is_err() {
-        print_error(&format!("Failed to read file {}", &args.path));
-        return;
-    }
-    let file_contents = file_contents.unwrap();
+    let file_contents = match fs::read_to_string(&args.path) {
+        Ok(res) => res,
+        Err(_) => {
+            print_error(&format!("Failed to read file {}", &args.path));
+            return;
+        }
+    };
 
     // TODO: make a client builder here, configure it, then build the client
     // TODO: I should use a global to store the web client so I can access it from
@@ -71,7 +71,7 @@ fn main() {
     // TODO: Set this from a config value
     WEB_REQUEST_DOMAIN.set("http://127.0.0.1:5000".to_owned()).expect("Failed to set static global for web domain");
 
-    let test_file = YamlLoader::load_from_str(&file_contents);
+    let test_file = YamlLoader::load_from_str(file_contents.as_str());
     match test_file {
         Ok(mut file_yaml) => {
             println!("RUNNING TESTS");
