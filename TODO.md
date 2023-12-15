@@ -8,7 +8,6 @@
     - I think this is done? But I think variables are _too_ permissive. Ex, a nested test can change
       a var in a parent test. A test can alter a var set in setup? Is this okay?
 - Testing
-  - frontend
   - Simple Python webserver vs test harness?
     - Web server already done and is simple, but using it would require a test-script that starts the
       server, runs the rust tests, and then reports results
@@ -22,8 +21,6 @@
   - Basic functionality
     - Variable access
       - Trying to access a list with a non int index
-    - PRINT
-      - Both just a passed value and variables
     - Standalone expression
       - Literal (no-op?)
       - HttpWeb

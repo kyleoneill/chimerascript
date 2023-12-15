@@ -125,6 +125,17 @@ mod testing {
         assert_eq!(res.1, 3, "{} should have 3 failing tests due to runtime errors but had {}", filename, res.1);
     }
 
-    // TODO: Test printing. Print might need to be given a writer (like write!()) so we can
-    //       substitute in where it's writing to in its test so we can assert on what it writes
+    #[test]
+    /// Test that the print command causes no errors
+    fn print_command() {
+        // TODO: This test is not complete, it just checks that the print command causes no failures.
+        //       Actually testing what it does involves re-directing the project writer from std
+        //       output. This seems to require a mutable static reference, which then requires
+        //       an unsafe block both here and in our write method which is not great
+        let client = initialize();
+        let filename = "print.chs";
+        let tests = read_cs_file(filename);
+        let res = TestCase::run_outermost_test_case(tests, client);
+        assert_eq!(res.0, 1, "{} should have 1 passing test which prints but had {}", filename, res.0);
+    }
 }
