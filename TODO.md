@@ -21,8 +21,6 @@
     - Teardown running when the test fails
   - Basic functionality
     - Variable access
-      - Trying to access variable that does not exist
-      - Trying to access an invalid subfield of a variable
       - Trying to access a list with a non int index
     - PRINT
       - Both just a passed value and variables

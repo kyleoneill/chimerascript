@@ -115,6 +115,16 @@ mod testing {
         assert_eq!(res.0, 4, "{} should have 4 passing web request tests but had {}", filename, res.0);
     }
 
+    #[test]
+    /// Test runtime errors
+    fn runtime_errors() {
+        let client = initialize();
+        let filename = "runtime_errors.chs";
+        let tests = read_cs_file(filename);
+        let res = TestCase::run_outermost_test_case(tests, client);
+        assert_eq!(res.1, 3, "{} should have 3 failing tests due to runtime errors but had {}", filename, res.1);
+    }
+
     // TODO: Test printing. Print might need to be given a writer (like write!()) so we can
     //       substitute in where it's writing to in its test so we can assert on what it writes
 }

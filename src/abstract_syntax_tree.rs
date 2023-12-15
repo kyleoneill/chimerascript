@@ -621,7 +621,7 @@ mod ast_tests {
         assert_eq!(trees.len(), 3);
         assert_eq!(trees[0].left_value, Value::Variable("foo".to_owned()));
         assert_eq!(trees[0].right_value, Value::Literal(Literal::Int(1)));
-        assert_eq!(trees[1].left_value, Value::Literal(Literal::Str("\"test\"".to_owned())));
+        assert_eq!(trees[1].left_value, Value::Literal(Literal::Str("test".to_owned())));
         assert_eq!(trees[2].left_value, Value::Literal(Literal::Bool(true)));
         assert_eq!(trees[2].right_value, Value::Literal(Literal::Bool(false)));
     }
