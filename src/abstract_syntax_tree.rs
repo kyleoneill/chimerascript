@@ -149,6 +149,7 @@ impl ChimeraScriptAST {
     fn parse_rule_to_literal_value(pair: Pair<Rule>) -> Result<Literal, ChimeraCompileError> {
         // A literal can be an int, a bool, or a string. Check to see if it's an int
         // or bool before setting it to be a string
+        if pair.as_rule() != Rule::LiteralValue { return Err(FailedParseAST("Expected a Rule::LiteralValue but got a different Rule variant".to_owned())) }
         match pair.as_str().parse::<i64>() {
             Ok(res) => return Ok(Literal::Int(res)),
             Err(_) => ()
@@ -158,6 +159,10 @@ impl ChimeraScriptAST {
             "false" => Literal::Bool(false),
             "null" => Literal::Null,
             _ => {
+                // TODO: Refactor this to be a bit more readable and match how the rest of the token
+                //       parsing is being handled. This is currently calling into_inner to grab a QuoteString,
+                //       into_inner again to grab an AggregatedString, and then getting the str value
+                //       of the AggregatedString
                 match pair.into_inner().peek() {
                     Some(first_inner) => {
                         match first_inner.into_inner().peek() {
@@ -175,13 +180,14 @@ impl ChimeraScriptAST {
     }
 
     fn parse_rule_to_expression(pair: Pair<Rule>) -> Result<Expression, ChimeraCompileError> {
-        // An Expression is going to contain EITHER
+        // An Expression is going to contain
         // a. A LiteralValue which will hold some literal
         // b. An HttpCommand which will contain
         //   1. An Http verb
         //   2. The slash path of the Http command
         //   3. Optional list of HttpAssignment, which look like `field="value"`
         //   4. Optional list of KeyValuePair, which look like `timeout=>60`
+        // c. A LIST expression
         if pair.as_rule() != Rule::Expression {return Err(FailedParseAST("tried to parse a non-Expression rule as an Expression".to_owned()))}
         let mut expression_pairs = pair.into_inner();
 
@@ -252,7 +258,37 @@ impl ChimeraScriptAST {
                     key_val_pairs
                 }))
             },
-            _ => {return Err(FailedParseAST("Rule::Expression contained an invalid inner rule, expected to only get LiteralValue or HttpCommand".to_owned()))}
+            Rule::ListExpression => {
+                let mut list_paris = first_token.into_inner();
+                let list_expression_kind_token = list_paris.next().ok_or_else(|| return FailedParseAST("Did not get any tokens inside a ListExpression".to_owned()))?;
+                match list_expression_kind_token.as_rule() {
+                    Rule::ListNew => {
+                        let mut list_new_pairs = list_expression_kind_token.into_inner();
+                        let mut list_value_token = list_new_pairs.next().ok_or_else(|| return FailedParseAST("Did not get any tokens inside a ListNew".to_owned()))?;
+                        let mut list_values: Vec<Value> = Vec::new();
+                        while list_value_token.as_rule() == Rule::CommaSeparatedValues {
+                            let mut inner = list_value_token.into_inner();
+                            let literal_token = inner.next().ok_or_else(|| return FailedParseAST("Did not get an inner token when parsing a CommaSeparatedValues, which should always contain a Literal".to_owned()))?;
+                            let value = ChimeraScriptAST::parse_rule_to_value(literal_token)?;
+                            list_values.push(value);
+                            list_value_token = list_new_pairs.next().ok_or_else(|| return FailedParseAST("Ran out of tokens when parsing CommaSeparatedValues. This token stream should always end with a Literal".to_owned()))?;
+                        }
+                        let value = ChimeraScriptAST::parse_rule_to_value(list_value_token)?;
+                        list_values.push(value);
+                        Ok(Expression::ListExpression(ListExpression::New(list_values)))
+                    },
+                    Rule::ListSingleArgOperation => {
+                        todo!();
+                        println!("lsao\n{:?}", list_expression_kind_token);
+                    },
+                    Rule::ListNoArgOperation => {
+                        todo!();
+                        println!("ohno\n{:?}", list_expression_kind_token);
+                    },
+                    _ => { return Err(FailedParseAST("ListExpression contained an invalid inner rule".to_owned())) }
+                }
+            },
+            _ => { return Err(FailedParseAST("Expression contained an invalid inner rule".to_owned())) }
         }
     }
 }
@@ -274,7 +310,8 @@ pub struct AssignmentExpr {
 #[derive(Debug)]
 pub enum Expression {
     LiteralExpression(Literal),
-    HttpCommand(HttpCommand)
+    HttpCommand(HttpCommand),
+    ListExpression(ListExpression)
 }
 
 #[derive(Debug)]
@@ -445,6 +482,25 @@ impl std::fmt::Display for Literal {
             Literal::Null => write!(f, "<null>")
         }
     }
+}
+
+#[derive(Debug)]
+pub enum ListExpression {
+    New(Vec<Value>),
+    Length(String),
+    SingleArgOp(ListArgCommand)
+}
+
+#[derive(Debug)]
+pub struct ListArgCommand {
+    list_name: String,
+    operation: ListArgCommandOperations
+}
+
+#[derive(Debug)]
+pub enum ListArgCommandOperations {
+    Append(Value),
+    Remove(Value)
 }
 
 #[derive(Debug, PartialEq)]

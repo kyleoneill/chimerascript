@@ -128,10 +128,10 @@ mod testing {
     #[test]
     /// Test that the print command causes no errors
     fn print_command() {
-        // TODO: This test is not complete, it just checks that the print command causes no failures.
-        //       Actually testing what it does involves re-directing the project writer from std
-        //       output. This seems to require a mutable static reference, which then requires
-        //       an unsafe block both here and in our write method which is not great
+        // This test is not complete, it just checks that the print command causes no failures.
+        // Actually testing what it does involves re-directing the project writer from std
+        // output. This seems to require a mutable static reference, which then requires
+        // an unsafe block both here and in our write method which is not great
         let client = initialize();
         let filename = "print.chs";
         let tests = read_cs_file(filename);

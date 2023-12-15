@@ -58,6 +58,10 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                 },
                 Err(_) => Err(ChimeraRuntimeFailure::WebRequestFailure(http_command.path.clone(), context.current_line))
             }
+        },
+        Expression::ListExpression(list_expression) => {
+            println!("{:?}", list_expression);
+            todo!()
         }
     }
 }
