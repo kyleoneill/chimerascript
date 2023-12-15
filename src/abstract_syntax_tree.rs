@@ -14,7 +14,7 @@ pub struct ChimeraScriptAST {
 impl ChimeraScriptAST {
     /// Convert Pest tokens into an abstract syntax tree.
     pub fn from_pairs(pairs: Pairs<Rule>) -> Result<Self, ChimeraCompileError> {
-        // There should only be one Pair<Rule> here, do I even need a loop or should I just get
+        // There should only be one Pair<Rule> here. Do I even need a loop or should I just get
         // the first/next out of the iter?
         for pair in pairs {
             let statement = ChimeraScriptAST::parse_rule_to_statement(pair)?;
@@ -156,7 +156,20 @@ impl ChimeraScriptAST {
         let res = match pair.as_str() {
             "true" => Literal::Bool(true),
             "false" => Literal::Bool(false),
-            _ => Literal::Str(pair.as_str().to_owned()),
+            "null" => Literal::Null,
+            _ => {
+                match pair.into_inner().peek() {
+                    Some(first_inner) => {
+                        match first_inner.into_inner().peek() {
+                            Some(second_inner) => {
+                                Literal::Str(second_inner.as_str().to_owned())
+                            },
+                            None => return Err(FailedParseAST("Failed to get tokens for a Literal String value".to_owned()))
+                        }
+                    },
+                    None => return Err(FailedParseAST("Failed to get tokens for a Literal String value".to_owned()))
+                }
+            },
         };
         Ok(res)
     }
@@ -442,7 +455,7 @@ pub enum HTTPVerb {
     DELETE
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum AssignmentValue {
     Literal(Literal),
     // TODO: We should be storing a serde_json::Value::Object here rather than a serde_json::Value,
@@ -521,7 +534,7 @@ impl AssignmentValue {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct HttpResponse {
     // TODO: Store header data?
     pub status_code: u16,
@@ -608,7 +621,7 @@ mod ast_tests {
         assert_eq!(trees.len(), 3);
         assert_eq!(trees[0].left_value, Value::Variable("foo".to_owned()));
         assert_eq!(trees[0].right_value, Value::Literal(Literal::Int(1)));
-        assert_eq!(trees[1].left_value, Value::Literal(Literal::Str("\"test\"".to_owned())));
+        assert_eq!(trees[1].left_value, Value::Literal(Literal::Str("test".to_owned())));
         assert_eq!(trees[2].left_value, Value::Literal(Literal::Bool(true)));
         assert_eq!(trees[2].right_value, Value::Literal(Literal::Bool(false)));
     }

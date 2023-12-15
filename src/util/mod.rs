@@ -59,6 +59,9 @@ pub fn access_json(json_value: &Value, accessors: &[&str], context: &Context) ->
             }
             Ok(AssignmentValue::Literal(Literal::Int(n.as_i64().unwrap())))
         },
+        // TODO: If the web resource returns a stringified num or bool, should we check to convert that here?
+        //       Ex, if we are accessing some (web_res.body.foo) where "foo" has been set to `"1"`, should
+        //       we check to see if the value can be converted into an int and return it if so?
         Value::String(s) => Ok(AssignmentValue::Literal(Literal::Str(s.clone()))),
         // TODO: When Literal::List is added this should check to see if the Value::Array contains all
         //       primitives and, if so, convert it to a Literal::List. This might not be the case, like if

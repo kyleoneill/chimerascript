@@ -33,15 +33,19 @@ KeyValuePair = ${ VariableNameAssignment ~ "=>" ~ Value } // repeatable optional
 HttpAssignment = ${ VariableNameAssignment ~ "=" ~ Value }
 
 // TODO: Will need to add variable support in here
-QuoteString = { "\"" ~ Str+ ~ "\"" }
+QuoteString = { "\"" ~ AggregatedString ~ "\"" }
 
-LiteralValue = { QuoteString | ASCII_DIGIT+ | "true" | "false" }
+LiteralValue = { QuoteString | ASCII_DIGIT+ | "true" | "false" | "null" }
 
 VariableValue = ${ "(" ~ NestedVariable+ ~ ")" }
 
 Value = ${ LiteralValue | VariableValue }
 
 VariableNameAssignment = { Str+ }
+
+AggregatedString = { StrWithWhitespace+ }
+WhiteSpace = @{ " " }
+StrWithWhitespace = _{ Str | WhiteSpace }
 
 Str = _{ ASCII_ALPHANUMERIC | "-" | "_" }
 

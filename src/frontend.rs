@@ -3,9 +3,8 @@ use pest::error::InputLocation;
 use pest::Parser;
 use pest_derive::Parser;
 use yaml_rust::Yaml;
+use crate::abstract_syntax_tree::{AssignmentValue, ChimeraScriptAST, Statement};
 use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure};
-use crate::abstract_syntax_tree::*;
-use crate::{abstract_syntax_tree, WEB_REQUEST_DOMAIN};
 
 pub struct Context {
     pub current_line: i32,
@@ -29,10 +28,10 @@ pub enum TestResult {
 #[grammar = "grammar.pest"]
 pub struct CScriptTokenPairs;
 
-/// A TestCase consists of an optional expected_failure, a setup step which will run before the test,
-/// a set of steps which make up a test, and a set of teardown steps which run after the test. The
-/// setup and teardown steps are a vec of TestLine but the main test, steps, is a vec of Operations
-/// as a test can contain a sub-test.
+/// A TestCase consists of an expected_failure (test will not count as failed if it fails), a setup
+/// section which will run before the test, a set of steps which make up a test, and a set of teardown
+/// steps which run after the test. The setup and teardown steps are a vec of TestLine as they cannot
+/// contain subtests, but the main test is a vec of Operation as we can nest a nest inside of a test.
 #[derive(Debug)]
 pub struct TestCase {
     name: String,
@@ -95,7 +94,7 @@ impl TestCase {
 
     pub fn print_in_test(thing_to_print: &str, depth: u32) {
         for _ in 0..depth {
-            print!(" ");
+            print!("  ");
         }
         println!("{}", thing_to_print);
     }
@@ -104,7 +103,7 @@ impl TestCase {
         let mut tests_passed = 0;
         let mut tests_failed = 0;
         for test in tests {
-            let mut test_case_variables: HashMap<String, abstract_syntax_tree::AssignmentValue> = HashMap::new();
+            let mut test_case_variables: HashMap<String, AssignmentValue> = HashMap::new();
             match test.run_test_case(&mut test_case_variables, &mut tests_passed, &mut tests_failed, 1, &web_client) {
                 Ok(_) => continue,
                 Err(err) => {
@@ -154,10 +153,9 @@ impl TestCase {
                     match test_line.run_line(variable_map, &context, depth, web_client) {
                         Ok(_) => (),
                         Err(e) => {
-                            // TODO: RUN TEARDOWN HERE NOW
-                            *tests_failed += 1;
-                            Self::print_in_test(&format!("TEST {} FAILED", self.name), depth);
-                            return Err(e)
+                            Self::print_in_test(e.to_string().as_str(), depth);
+                            test_passed = false;
+                            break;
                         }
                     }
                 }
