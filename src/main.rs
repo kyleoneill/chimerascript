@@ -73,7 +73,7 @@ fn main() {
 
     let test_file = YamlLoader::load_from_str(file_contents.as_str());
     match test_file {
-        Ok(mut file_yaml) => {
+        Ok(file_yaml) => {
             println!("RUNNING TESTS");
             let mut tests_passed = 0;
             let mut tests_failed = 0;

@@ -36,7 +36,6 @@ def test_resource():
     elif request.method == "POST":
         json_data = request.get_json()
         res = {}
-        print(json_data)
         for key in example:
             if key not in json_data:
                 return make_response(json.jsonify({"error":f"missing field {key}"}), 400)

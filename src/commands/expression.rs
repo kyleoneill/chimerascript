@@ -42,7 +42,7 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                     web_client.post(resolved_path).json(&body_map).send()
                 },
                 HTTPVerb::PUT => {
-                    web_client.post(resolved_path).json(&body_map).send()
+                    web_client.put(resolved_path).json(&body_map).send()
                 }
             };
             match res {

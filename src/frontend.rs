@@ -94,7 +94,7 @@ impl TestCase {
 
     pub fn print_in_test(thing_to_print: &str, depth: u32) {
         for _ in 0..depth {
-            print!(" ");
+            print!("  ");
         }
         println!("{}", thing_to_print);
     }
@@ -153,10 +153,9 @@ impl TestCase {
                     match test_line.run_line(variable_map, &context, depth, web_client) {
                         Ok(_) => (),
                         Err(e) => {
-                            // TODO: RUN TEARDOWN HERE NOW
-                            *tests_failed += 1;
-                            Self::print_in_test(&format!("TEST {} FAILED", self.name), depth);
-                            return Err(e)
+                            Self::print_in_test(e.to_string().as_str(), depth);
+                            test_passed = false;
+                            break;
                         }
                     }
                 }
