@@ -749,14 +749,15 @@ mod ast_tests {
     #[test]
     /// Test the ASSERT subcommands; EQUALS, GTE, GT, LTE, LT, STATUS
     fn assertion_subcommands() {
-        let trees: Vec<AssertCommand> = ["ASSERT EQUALS 1 1", "ASSERT GTE 1 1", "ASSERT GT 1 1", "ASSERT LTE 1 1", "ASSERT LT 1 1", "ASSERT STATUS 1 1"].into_iter().map(|x| str_to_ast(x).statement.into()).collect();
-        assert_eq!(trees.len(), 6);
+        let trees: Vec<AssertCommand> = ["ASSERT EQUALS 1 1", "ASSERT GTE 1 1", "ASSERT GT 1 1", "ASSERT LTE 1 1", "ASSERT LT 1 1", "ASSERT STATUS 1 1", "ASSERT LENGTH (foo) 1"].into_iter().map(|x| str_to_ast(x).statement.into()).collect();
+        assert_eq!(trees.len(), 7);
         assert_eq!(trees[0].subcommand, AssertSubCommand::EQUALS);
         assert_eq!(trees[1].subcommand, AssertSubCommand::GTE);
         assert_eq!(trees[2].subcommand, AssertSubCommand::GT);
         assert_eq!(trees[3].subcommand, AssertSubCommand::LTE);
         assert_eq!(trees[4].subcommand, AssertSubCommand::LT);
         assert_eq!(trees[5].subcommand, AssertSubCommand::STATUS);
+        assert_eq!(trees[6].subcommand, AssertSubCommand::LENGTH);
     }
 
     #[test]
