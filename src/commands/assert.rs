@@ -2,12 +2,30 @@ use std::collections::HashMap;
 use crate::abstract_syntax_tree::{AssertCommand, AssertSubCommand, AssignmentValue};
 use crate::err_handle::{ChimeraRuntimeFailure, VarTypes};
 use crate::frontend::Context;
+use serde_json::Value;
 
 pub fn assert_command(context: &Context, assert_command: AssertCommand, variable_map: &HashMap<String, AssignmentValue>) -> Result<(), ChimeraRuntimeFailure> {
     let left_value = AssignmentValue::resolve_value(&assert_command.left_value, variable_map, context)?;
     let right_value = AssignmentValue::resolve_value(&assert_command.right_value, variable_map, context)?;
     let assertion_passed = match assert_command.subcommand {
-        // TODO: ASSERT LENGTH, left value has to be a serde_json::Value::Array or a Literal::List when implemented, right has to be a num
+        AssertSubCommand::LENGTH => {
+            if !right_value.is_numeric() { return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.right_value.error_print(), VarTypes::Int, context.current_line)) }
+            let assert_len = right_value.to_int() as usize;
+            match &left_value {
+                AssignmentValue::JsonValue(json_value) => {
+                    match json_value {
+                        Value::Array(json_array) => {
+                            json_array.len() == assert_len
+                        },
+                        _ => return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.left_value.error_print(), VarTypes::List, context.current_line))
+                    }
+                },
+                AssignmentValue::List(list) => {
+                    list.len() == assert_len
+                },
+                _ => return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.left_value.error_print(), VarTypes::List, context.current_line))
+            }
+        },
         AssertSubCommand::EQUALS => { left_value == right_value },
         AssertSubCommand::STATUS => {
             match left_value {

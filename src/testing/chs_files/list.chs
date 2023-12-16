@@ -28,6 +28,10 @@
         - ASSERT EQUALS (removed) 1
         - var new_len = LIST LENGTH (my_list)
         - ASSERT NOT EQUALS (first_len) (new_len)
+    - case: list-assert-length
+      steps:
+        - var list_len = LIST LENGTH (my_list)
+        - ASSERT LENGTH (my_list) (list_len)
 - case: list-bad-remove-index
   steps:
     - var my_list = LIST NEW [6]
@@ -35,3 +39,7 @@
 - case: list-bad-access
   steps:
     - LIST APPEND (i_dont_exist) 10
+- case: list-assert-length-to-non-list
+  steps:
+    - var my_num = LITERAL 5
+    - ASSERT LENGTH (my_num) 5

@@ -63,6 +63,7 @@ impl ChimeraScriptAST {
                     "LTE" => AssertSubCommand::LTE,
                     "LT" => AssertSubCommand::LT,
                     "STATUS" => AssertSubCommand::STATUS,
+                    "LENGTH" => AssertSubCommand::LENGTH,
                     _ => return Err(FailedParseAST("Rule::AssertSubcommand contained an invalid value".to_owned()))
                 };
 
@@ -452,7 +453,8 @@ pub enum AssertSubCommand {
     GT,
     LTE,
     LT,
-    STATUS
+    STATUS,
+    LENGTH
 }
 
 impl std::fmt::Display for AssertSubCommand {
@@ -463,7 +465,8 @@ impl std::fmt::Display for AssertSubCommand {
             AssertSubCommand::GT => write!(f, "be greater than"),
             AssertSubCommand::LTE => write!(f, "be less than or equal to"),
             AssertSubCommand::LT => write!(f, "be less than"),
-            AssertSubCommand::STATUS => write!(f, "have a status code of")
+            AssertSubCommand::STATUS => write!(f, "have a status code of"),
+            AssertSubCommand::LENGTH => write!(f, "have a length of")
         }
     }
 }

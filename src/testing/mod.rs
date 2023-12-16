@@ -155,7 +155,7 @@ mod testing {
         let filename = "list.chs";
         let tests = read_cs_file(filename);
         let res = TestCase::run_outermost_test_case(tests, client);
-        assert_eq!(res.0, 6, "{} should have 6 passing tests which test lists but had {}", filename, res.0);
-        assert_eq!(res.1, 2, "{} should have 2 failing tests which test bad list access but had {}", filename, res.1);
+        assert_eq!(res.0, 7, "{} should have 7 passing tests which test lists but had {}", filename, res.0);
+        assert_eq!(res.1, 3, "{} should have 3 failing tests which test bad list access but had {}", filename, res.1);
     }
 }
