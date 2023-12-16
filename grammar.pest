@@ -7,30 +7,35 @@ Statement = { AssignmentExpr | AssertCommand | PrintCommand | Expression }
 
 AssignmentExpr = { "var" ~ VariableNameAssignment ~ "=" ~ Expression }
 
-Expression = { HttpCommand | "LITERAL" ~ LiteralValue }
+Expression = { HttpCommand | "LITERAL" ~ LiteralValue | "LIST" ~ ListExpression }
 
+// ASSERT STATEMENT
 // This looks like `ASSERT EQUALS (my_var.foo) 5 "FailureMessage"`
 AssertCommand = { "ASSERT" ~ Negation? ~ AssertSubCommand ~ Value ~ Value ~ QuoteString? }
-
 Negation = { "NOT" }
-
-AssertSubCommand = { "EQUALS" | "GTE" | "GT" | "LTE" | "LT" | "STATUS" }
-
+AssertSubCommand = { "EQUALS" | "GTE" | "GT" | "LTE" | "LT" | "STATUS" | "LENGTH" }
 PrintCommand = { "PRINT" ~ Value }
 
+// HTTP EXPRESSION
 // e.g. PUT /foo?field=5 name="hello" timeout=>60
 HttpCommand = { HTTPVerb ~ Path ~ HttpAssignment* ~ KeyValuePair* }
-
 HTTPVerb = { "GET" | "PUT" | "POST" | "DELETE" }
-
 // e.g. /foo/bar?thing=5&other=50&another=10
 Path = ${ ("/" ~ Str+)+ ~ BeginPathArgs? }
 BeginPathArgs = ${ "?" ~ HttpAssignment ~ AdditionalPathArgs* }
 AdditionalPathArgs = ${ "&" ~ HttpAssignment }
-
 KeyValuePair = ${ VariableNameAssignment ~ "=>" ~ Value } // repeatable optional key/val like timeout=>60
-
 HttpAssignment = ${ VariableNameAssignment ~ "=" ~ Value }
+
+// LIST EXPRESSION
+ListExpression = { ListNew | ListCommandExpr }
+ListNew = { "NEW" ~ "[" ~ CommaSeparatedValues* ~ Value ~ "]" }
+CommaSeparatedValues = { Value ~ "," }
+ListCommandExpr = { ListCommand ~ VariableValue ~ Value? }
+ListCommand = { "LENGTH" | "APPEND" | "REMOVE" }
+
+
+// GENERAL USE
 
 // TODO: Will need to add variable support in here
 QuoteString = { "\"" ~ AggregatedString ~ "\"" }

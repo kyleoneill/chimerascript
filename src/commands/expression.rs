@@ -1,9 +1,8 @@
 use std::collections::HashMap;
-use crate::abstract_syntax_tree::{AssignmentValue, Expression};
+use crate::abstract_syntax_tree::{AssignmentValue, Expression, HTTPVerb, HttpResponse, ListExpression, Literal, ListCommandOperations, MutateListOperations};
 use crate::err_handle::ChimeraRuntimeFailure;
 use crate::frontend::Context;
 use crate::WEB_REQUEST_DOMAIN;
-use crate::abstract_syntax_tree::{HTTPVerb, HttpResponse};
 use serde_json::Value;
 
 pub fn expression_command(context: &Context, expression: Expression, variable_map: &mut HashMap<String, AssignmentValue>, web_client: &reqwest::blocking::Client, variable_name: Option<String>) -> Result<AssignmentValue, ChimeraRuntimeFailure> {
@@ -57,6 +56,53 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                     Ok(AssignmentValue::HttpResponse(http_response))
                 },
                 Err(_) => Err(ChimeraRuntimeFailure::WebRequestFailure(http_command.path.clone(), context.current_line))
+            }
+        },
+        Expression::ListExpression(list_expression) => {
+            // TODO: Add a LIST POP
+            // TODO: Add the ability to make an empty list, it currently _must_ be initialized with one value
+            // TODO: Add a LIST EMPTY?
+            match list_expression {
+                ListExpression::New(new_list) => {
+                    let mut literal_list: Vec<Literal> = Vec::new();
+                    for value in new_list {
+                        let literal_val = value.resolve_to_literal(context, variable_map)?;
+                        literal_list.push(literal_val);
+                    }
+                    Ok(AssignmentValue::List(literal_list))
+                },
+                ListExpression::ListArgument(list_command) => {
+                    match list_command.operation {
+                        ListCommandOperations::MutateOperations(ref mutable_operation) => {
+                            match mutable_operation {
+                                MutateListOperations::Append(append_val) => {
+                                    let literal = append_val.resolve_to_literal(context, variable_map)?;
+                                    let list = list_command.list_mut_ref(variable_map, context)?;
+                                    list.push(literal.clone());
+                                    Ok(AssignmentValue::Literal(literal))
+                                },
+                                MutateListOperations::Remove(remove_val) => {
+                                    match remove_val.resolve_to_literal(context, variable_map)? {
+                                        Literal::Int(num) => {
+                                            let index = num as usize;
+                                            let list = list_command.list_mut_ref(variable_map, context)?;
+                                            if index >= list.len() {
+                                                return Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line))
+                                            }
+                                            let removed_val = list.remove(index);
+                                            Ok(AssignmentValue::Literal(removed_val))
+                                        },
+                                        _ => return Err(ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))
+                                    }
+                                }
+                            }
+                        },
+                        ListCommandOperations::Length => {
+                            let list = list_command.list_ref(variable_map, context)?;
+                            Ok(AssignmentValue::Literal(Literal::Int(list.len() as i64)))
+                        }
+                    }
+                }
             }
         }
     }

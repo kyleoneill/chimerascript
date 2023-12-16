@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Formatter;
 use pest::iterators::{Pair, Pairs};
 use serde_json::Value as SerdeJsonValue;
-use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure};
+use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure, VarTypes};
 use crate::err_handle::ChimeraCompileError::FailedParseAST;
 use crate::frontend::{Rule, Context};
 
@@ -63,6 +63,7 @@ impl ChimeraScriptAST {
                     "LTE" => AssertSubCommand::LTE,
                     "LT" => AssertSubCommand::LT,
                     "STATUS" => AssertSubCommand::STATUS,
+                    "LENGTH" => AssertSubCommand::LENGTH,
                     _ => return Err(FailedParseAST("Rule::AssertSubcommand contained an invalid value".to_owned()))
                 };
 
@@ -129,6 +130,13 @@ impl ChimeraScriptAST {
         }
     }
 
+    fn parse_rule_to_variable_name(pair: Pair<Rule>) -> Result<String, ChimeraCompileError> {
+        if pair.as_rule() != Rule::VariableValue {return Err(FailedParseAST("Expected a VariableValue but got a different rule".to_owned()))}
+        let var_name_str = pair.as_str();
+        // We want to remove the opening and closing parenthesis from the var name
+        Ok(var_name_str[1..var_name_str.len() - 1].to_owned())
+    }
+
     fn parse_rule_to_value(pair: Pair<Rule>) -> Result<Value, ChimeraCompileError> {
         if pair.as_rule() != Rule::Value {return Err(FailedParseAST("expected a Rule::Value but got a different Rule variant".to_owned()))};
         let inner = pair.into_inner().peek().ok_or_else(|| return FailedParseAST("Rule::Value did not contain an inner".to_owned()))?;
@@ -137,11 +145,7 @@ impl ChimeraScriptAST {
                 let literal_value = ChimeraScriptAST::parse_rule_to_literal_value(inner)?;
                 Ok(Value::Literal(literal_value))
             },
-            Rule::VariableValue => {
-                // We want to remove the opening and closing parenthesis from the var name
-                let var_name_str = inner.as_str();
-                Ok(Value::Variable(var_name_str[1..var_name_str.len() - 1].to_owned()))
-            },
+            Rule::VariableValue => Ok(Value::Variable(ChimeraScriptAST::parse_rule_to_variable_name(inner)?)),
             _ => { Err(FailedParseAST("got an invalid Rule variant while parsing the inner of a Rule::Value".to_owned()))}
         }
     }
@@ -149,6 +153,7 @@ impl ChimeraScriptAST {
     fn parse_rule_to_literal_value(pair: Pair<Rule>) -> Result<Literal, ChimeraCompileError> {
         // A literal can be an int, a bool, or a string. Check to see if it's an int
         // or bool before setting it to be a string
+        if pair.as_rule() != Rule::LiteralValue { return Err(FailedParseAST("Expected a Rule::LiteralValue but got a different Rule variant".to_owned())) }
         match pair.as_str().parse::<i64>() {
             Ok(res) => return Ok(Literal::Int(res)),
             Err(_) => ()
@@ -158,6 +163,10 @@ impl ChimeraScriptAST {
             "false" => Literal::Bool(false),
             "null" => Literal::Null,
             _ => {
+                // TODO: Refactor this to be a bit more readable and match how the rest of the token
+                //       parsing is being handled. This is currently calling into_inner to grab a QuoteString,
+                //       into_inner again to grab an AggregatedString, and then getting the str value
+                //       of the AggregatedString
                 match pair.into_inner().peek() {
                     Some(first_inner) => {
                         match first_inner.into_inner().peek() {
@@ -175,13 +184,14 @@ impl ChimeraScriptAST {
     }
 
     fn parse_rule_to_expression(pair: Pair<Rule>) -> Result<Expression, ChimeraCompileError> {
-        // An Expression is going to contain EITHER
+        // An Expression is going to contain
         // a. A LiteralValue which will hold some literal
         // b. An HttpCommand which will contain
         //   1. An Http verb
         //   2. The slash path of the Http command
         //   3. Optional list of HttpAssignment, which look like `field="value"`
         //   4. Optional list of KeyValuePair, which look like `timeout=>60`
+        // c. A LIST expression
         if pair.as_rule() != Rule::Expression {return Err(FailedParseAST("tried to parse a non-Expression rule as an Expression".to_owned()))}
         let mut expression_pairs = pair.into_inner();
 
@@ -252,7 +262,53 @@ impl ChimeraScriptAST {
                     key_val_pairs
                 }))
             },
-            _ => {return Err(FailedParseAST("Rule::Expression contained an invalid inner rule, expected to only get LiteralValue or HttpCommand".to_owned()))}
+            Rule::ListExpression => {
+                let mut list_paris = first_token.into_inner();
+                let list_expression_kind_token = list_paris.next().ok_or_else(|| return FailedParseAST("Did not get any tokens inside a ListExpression".to_owned()))?;
+                match list_expression_kind_token.as_rule() {
+                    Rule::ListNew => {
+                        let mut list_new_pairs = list_expression_kind_token.into_inner();
+                        let mut list_value_token = list_new_pairs.next().ok_or_else(|| return FailedParseAST("Did not get any tokens inside a ListNew".to_owned()))?;
+                        let mut list_values: Vec<Value> = Vec::new();
+                        while list_value_token.as_rule() == Rule::CommaSeparatedValues {
+                            let mut inner = list_value_token.into_inner();
+                            let literal_token = inner.next().ok_or_else(|| return FailedParseAST("Did not get an inner token when parsing a CommaSeparatedValues, which should always contain a Literal".to_owned()))?;
+                            let value = ChimeraScriptAST::parse_rule_to_value(literal_token)?;
+                            list_values.push(value);
+                            list_value_token = list_new_pairs.next().ok_or_else(|| return FailedParseAST("Ran out of tokens when parsing CommaSeparatedValues. This token stream should always end with a Literal".to_owned()))?;
+                        }
+                        let value = ChimeraScriptAST::parse_rule_to_value(list_value_token)?;
+                        list_values.push(value);
+                        Ok(Expression::ListExpression(ListExpression::New(list_values)))
+                    },
+                    Rule::ListCommandExpr => {
+                        let mut list_command_expr_tokens = list_expression_kind_token.into_inner();
+                        // Save the op pair to parse last as it might depend on the third token to set its value
+                        let command_token = list_command_expr_tokens.next().ok_or_else(|| return FailedParseAST("Ran out of tokens when parsing ListCommandExpr to get a ListCommand".to_owned()))?;
+                        let variable_name_token = list_command_expr_tokens.next().ok_or_else(|| return FailedParseAST("Ran out of tokens when parsing ListCommandExpr to get a VariableValue".to_owned()))?;
+                        let list_name = ChimeraScriptAST::parse_rule_to_variable_name(variable_name_token)?;
+                        let list_command = match list_command_expr_tokens.next() {
+                            Some(value_token) => {
+                                let value = ChimeraScriptAST::parse_rule_to_value(value_token)?;
+                                match command_token.as_str() {
+                                    "APPEND" => ListCommand { list_name, operation: ListCommandOperations::MutateOperations(MutateListOperations::Append(value)) },
+                                    "REMOVE" => ListCommand { list_name, operation: ListCommandOperations::MutateOperations(MutateListOperations::Remove(value)) },
+                                    _ => return Err(FailedParseAST("Got an invalid list command while parsing a ListCommandExpr with an additional argument".to_owned()))
+                                }
+                            },
+                            None => {
+                                match command_token.as_str() {
+                                    "LENGTH" => ListCommand { list_name, operation: ListCommandOperations::Length },
+                                    _ => return Err(FailedParseAST("Got an invalid list command while parsing a ListCommandExpr".to_owned()))
+                                }
+                            }
+                        };
+                        Ok(Expression::ListExpression(ListExpression::ListArgument(list_command)))
+                    },
+                    _ => { return Err(FailedParseAST("ListExpression contained an invalid inner rule".to_owned())) }
+                }
+            },
+            _ => { return Err(FailedParseAST("Expression contained an invalid inner rule".to_owned())) }
         }
     }
 }
@@ -274,7 +330,8 @@ pub struct AssignmentExpr {
 #[derive(Debug)]
 pub enum Expression {
     LiteralExpression(Literal),
-    HttpCommand(HttpCommand)
+    HttpCommand(HttpCommand),
+    ListExpression(ListExpression)
 }
 
 #[derive(Debug)]
@@ -364,10 +421,27 @@ impl Value {
                         },
                         AssignmentValue::JsonValue(json_val) => {
                             crate::util::access_json(json_val, &accessors[1..], context)
+                        },
+                        AssignmentValue::List(list) => {
+                            let index: usize = match accessors[1].parse() {
+                                Ok(res) => res,
+                                Err(_) => return Err(ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))
+                            };
+                            if index >= list.len() {
+                                return Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line))
+                            }
+                            Ok(AssignmentValue::Literal(list[index].clone()))
                         }
                     }
                 }
             }
+        }
+    }
+
+    pub fn resolve_to_literal(&self, context: &Context, variable_map: &HashMap<String, AssignmentValue>) -> Result<Literal, ChimeraRuntimeFailure> {
+        match self.resolve(context, variable_map)? {
+            AssignmentValue::Literal(literal) => Ok(literal),
+            _ => Err(ChimeraRuntimeFailure::UnsupportedOperation(context.current_line))
         }
     }
 }
@@ -379,7 +453,8 @@ pub enum AssertSubCommand {
     GT,
     LTE,
     LT,
-    STATUS
+    STATUS,
+    LENGTH
 }
 
 impl std::fmt::Display for AssertSubCommand {
@@ -390,7 +465,8 @@ impl std::fmt::Display for AssertSubCommand {
             AssertSubCommand::GT => write!(f, "be greater than"),
             AssertSubCommand::LTE => write!(f, "be less than or equal to"),
             AssertSubCommand::LT => write!(f, "be less than"),
-            AssertSubCommand::STATUS => write!(f, "have a status code of")
+            AssertSubCommand::STATUS => write!(f, "have a status code of"),
+            AssertSubCommand::LENGTH => write!(f, "have a length of")
         }
     }
 }
@@ -447,6 +523,68 @@ impl std::fmt::Display for Literal {
     }
 }
 
+#[derive(Debug)]
+pub enum ListExpression {
+    New(Vec<Value>),
+    ListArgument(ListCommand)
+}
+
+#[derive(Debug)]
+pub struct ListCommand {
+    pub list_name: String,
+    pub operation: ListCommandOperations
+}
+
+impl ListCommand {
+    pub fn list_ref<'a>(&'a self, variable_map: &'a HashMap<String, AssignmentValue>, context: &Context) -> Result<&Vec<Literal>, ChimeraRuntimeFailure> {
+        match variable_map.get(self.list_name.as_str()) {
+            Some(ret) => {
+                match ret {
+                    AssignmentValue::List(ret_list) => Ok(ret_list),
+                    _ => return Err(ChimeraRuntimeFailure::VarWrongType(self.list_name.clone(), VarTypes::List, context.current_line))
+                }
+            },
+            None => return Err(ChimeraRuntimeFailure::VarNotFound(self.list_name.clone(), context.current_line))
+        }
+    }
+
+    pub fn list_mut_ref<'a>(&'a self, variable_map: &'a mut HashMap<String, AssignmentValue>, context: &Context) -> Result<&mut Vec<Literal>, ChimeraRuntimeFailure> {
+        match variable_map.get_mut(self.list_name.as_str()) {
+            Some(ret) => {
+                match ret {
+                    AssignmentValue::List(ret_list) => Ok(ret_list),
+                    _ => return Err(ChimeraRuntimeFailure::VarWrongType(self.list_name.clone(), VarTypes::List, context.current_line))
+                }
+            },
+            None => return Err(ChimeraRuntimeFailure::VarNotFound(self.list_name.clone(), context.current_line))
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ListCommandOperations {
+    MutateOperations(MutateListOperations),
+    Length
+}
+
+#[derive(Debug)]
+pub enum MutateListOperations {
+    Append(Value),
+    Remove(Value)
+}
+
+impl From<Statement> for ListExpression {
+    fn from(value: Statement) -> Self {
+        match value {
+            Statement::Expression(expr) => match expr {
+                Expression::ListExpression(list_command) => list_command,
+                _ => panic!("tried to use an Expression as a ListExpression when it was not one")
+            },
+            _ => panic!("tried to use a Statement as an Expression when it was not one")
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum HTTPVerb {
     GET,
@@ -463,7 +601,8 @@ pub enum AssignmentValue {
     JsonValue(SerdeJsonValue),
     // TODO: Will also need a new variant like JsonArray for serde_json::Value::Array if the array contains
     //       maps and cannot be represented as a Literal::List when that is implemented
-    HttpResponse(HttpResponse)
+    HttpResponse(HttpResponse),
+    List(Vec<Literal>)
 }
 
 impl std::fmt::Display for AssignmentValue {
@@ -474,6 +613,10 @@ impl std::fmt::Display for AssignmentValue {
             AssignmentValue::JsonValue(json_val) => {
                 let json_str = crate::util::serde_json_to_string(json_val);
                 write!(f, "{}", json_str)
+            },
+            AssignmentValue::List(list) => {
+                let list_as_str = list.into_iter().map(|c| c.to_string()).collect::<Vec<String>>().join(", ");
+                write!(f, "[{}]", list_as_str)
             }
         }
     }
@@ -498,7 +641,8 @@ impl AssignmentValue {
                     SerdeJsonValue::Number(_) => true,
                     _ => false
                 }
-            }
+            },
+            Self::List(_) => false
         }
     }
 
@@ -529,7 +673,8 @@ impl AssignmentValue {
                     },
                     _ => panic!("Tried to convert a serde_json::Value to a num when it was not a Number")
                 }
-            }
+            },
+            Self::List(_) => panic!("Tried to convert a List to an int")
         }
     }
 }
@@ -604,14 +749,15 @@ mod ast_tests {
     #[test]
     /// Test the ASSERT subcommands; EQUALS, GTE, GT, LTE, LT, STATUS
     fn assertion_subcommands() {
-        let trees: Vec<AssertCommand> = ["ASSERT EQUALS 1 1", "ASSERT GTE 1 1", "ASSERT GT 1 1", "ASSERT LTE 1 1", "ASSERT LT 1 1", "ASSERT STATUS 1 1"].into_iter().map(|x| str_to_ast(x).statement.into()).collect();
-        assert_eq!(trees.len(), 6);
+        let trees: Vec<AssertCommand> = ["ASSERT EQUALS 1 1", "ASSERT GTE 1 1", "ASSERT GT 1 1", "ASSERT LTE 1 1", "ASSERT LT 1 1", "ASSERT STATUS 1 1", "ASSERT LENGTH (foo) 1"].into_iter().map(|x| str_to_ast(x).statement.into()).collect();
+        assert_eq!(trees.len(), 7);
         assert_eq!(trees[0].subcommand, AssertSubCommand::EQUALS);
         assert_eq!(trees[1].subcommand, AssertSubCommand::GTE);
         assert_eq!(trees[2].subcommand, AssertSubCommand::GT);
         assert_eq!(trees[3].subcommand, AssertSubCommand::LTE);
         assert_eq!(trees[4].subcommand, AssertSubCommand::LT);
         assert_eq!(trees[5].subcommand, AssertSubCommand::STATUS);
+        assert_eq!(trees[6].subcommand, AssertSubCommand::LENGTH);
     }
 
     #[test]
@@ -677,5 +823,68 @@ mod ast_tests {
         assert_eq!(full_expression.key_val_pairs.len(), 2);
         assert_eq!(full_expression.key_val_pairs[0].key, "timeout".to_owned());
         assert_eq!(full_expression.key_val_pairs[0].value, Value::Literal(Literal::Int(60)));
+    }
+
+    #[test]
+    /// Test the LIST command
+    fn list_expression() {
+        let new_list_expression: ListExpression = str_to_ast("LIST NEW [1, true, \"hello world\", (my_var)]").statement.into();
+        match new_list_expression {
+            ListExpression::New(list_values) => {
+                assert_eq!(list_values.len(), 4, "Expected list values to contain 4 values when 4 were provided to LIST NEW");
+                assert_eq!(list_values[0], Value::Literal(Literal::Int(1)), "When passing a 1 as the first list value, should have gotten a Value Literal Int");
+                assert_eq!(list_values[1], Value::Literal(Literal::Bool(true)), "When passing a true as the second list value, should have gotten a Value Literal Bool");
+                assert_eq!(list_values[2], Value::Literal(Literal::Str("hello world".to_owned())), "When passing a \"hello world\" as the third list value, should have gotten a Value Literal Str");
+                assert_eq!(list_values[3], Value::Variable("my_var".to_string()), "When passing a (my_var) as the fourth list value, should have gotten a Value Variable");
+            }
+            ListExpression::ListArgument(_) => panic!("Got a ListExpression::ListArgument variant when a ListExpression::New was expected")
+        }
+        let list_append_expression: ListExpression = str_to_ast("LIST APPEND (my_list) 5").statement.into();
+        match list_append_expression {
+            ListExpression::New(_) => panic!("Got a ListExpression::New variant when a ListExpression::ListArgument was expected"),
+            ListExpression::ListArgument(list_command) => {
+                assert_eq!(list_command.list_name.as_str(), "my_list", "Expected ListCommand to have a list_name of my_list when the command used that as the list variable name");
+                match list_command.operation {
+                    ListCommandOperations::MutateOperations(mutable_list_operations) => {
+                        match mutable_list_operations {
+                            MutateListOperations::Append(append_val) => {
+                                assert_eq!(append_val, Value::Literal(Literal::Int(5)), "Expected ListCommand's Append operation to contain a Literal Int 5 when the APPEND command was given a 5");
+                            },
+                            _ => panic!("Expected ListCommand operation to be a MutableOperation Append when using an APPEND command but it wasn't")
+                        }
+                    },
+                    _ => panic!("Expected ListCommand's operation field to be of the Append variant when using an APPEND command but it wasn't")
+                }
+            }
+        }
+        let list_remove_expression: ListExpression = str_to_ast("LIST REMOVE (my_list) 10").statement.into();
+        match list_remove_expression {
+            ListExpression::New(_) => panic!("Got a ListExpression::New variant when a ListExpression::ListArgument was expected"),
+            ListExpression::ListArgument(list_command) => {
+                assert_eq!(list_command.list_name.as_str(), "my_list", "Expected ListCommand to have a list_name of my_list when the command used that as the list variable name");
+                match list_command.operation {
+                    ListCommandOperations::MutateOperations(mutable_list_operations) => {
+                        match mutable_list_operations {
+                            MutateListOperations::Remove(remove_val) => {
+                                assert_eq!(remove_val, Value::Literal(Literal::Int(10)), "Expected ListCommand's Remove operation to contain a Literal Int 10 when the REMOVE command was given a 10");
+                            },
+                            _ => panic!("Expected ListCommand operation to be a MutableOperation Remove when using a REMOVE command but it wasn't")
+                        }
+                    },
+                    _ => panic!("Expected ListCommand's operation field to be of the Remove variant when using an REMOVE command but it wasn't")
+                }
+            }
+        }
+        let list_length_expression: ListExpression = str_to_ast("LIST LENGTH (some_list)").statement.into();
+        match list_length_expression {
+            ListExpression::New(_) => panic!("Got a ListExpression::New variant when a ListExpression::ListArgument was expected"),
+            ListExpression::ListArgument(list_command) => {
+                assert_eq!(list_command.list_name.as_str(), "some_list", "Expected ListCommand to have a list_name of some_list when the command used that as the list variable name");
+                match list_command.operation {
+                    ListCommandOperations::Length => (),
+                    _ => panic!("Expected ListCommand's operation field to be of the Length variant when using a LENGTH command but it wasn't")
+                }
+            }
+        }
     }
 }
