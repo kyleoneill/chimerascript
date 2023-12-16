@@ -19,8 +19,16 @@ mod testing {
     //       the requests being made and providing the expected response, so the use of a server
     //       is avoided. Maybe using a mock Client for tests?
 
+    // TODO: The Return value from tests should be changed. Would be better to return some sort of
+    //       Vec of TestResult which has a test name, if it passed or failed, and sub-test results.
+    //       This would allow tests to be _much_ more helpful. Right now, if a .chs file used by
+    //       these tests has 10 test-cases testing behavior, we just assert that 10 test-cases pass.
+    //       This is extremely unhelpful if the test fails, as it is not immediately apparent
+    //       what behavior is broken. The larger the .chs file, the more ambiguous it is as to
+    //       what failed
+
     fn initialize() -> &'static Client {
-        // The INIT: Once will "lock" this function so its logic can only ever be run once
+        // The `INIT: Once` will "lock" this part of the function so its logic can only ever be run once
         // This is needed to do setup that each test needs, running it multiple times causes a panic
         INIT.call_once(|| {
             WEB_REQUEST_DOMAIN.set("http://127.0.0.1:5000".to_owned()).unwrap();
@@ -137,5 +145,17 @@ mod testing {
         let tests = read_cs_file(filename);
         let res = TestCase::run_outermost_test_case(tests, client);
         assert_eq!(res.0, 1, "{} should have 1 passing test which prints but had {}", filename, res.0);
+    }
+
+    #[test]
+    /// Test that the list command works. This includes making a new list, getting the length of a
+    /// list, accessing the list, appending to a list, removing from a list, and printing a list
+    fn list_command() {
+        let client = initialize();
+        let filename = "list.chs";
+        let tests = read_cs_file(filename);
+        let res = TestCase::run_outermost_test_case(tests, client);
+        assert_eq!(res.0, 6, "{} should have 6 passing tests which test lists but had {}", filename, res.0);
+        assert_eq!(res.1, 2, "{} should have 2 failing tests which test bad list access but had {}", filename, res.1);
     }
 }

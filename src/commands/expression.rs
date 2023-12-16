@@ -59,7 +59,9 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
             }
         },
         Expression::ListExpression(list_expression) => {
-            // during new and append, fail if we get a non Literal if a Value::Variable returns a non-LITERAL for now
+            // TODO: Add a LIST POP
+            // TODO: Add the ability to make an empty list, it currently _must_ be initialized with one value
+            // TODO: Add a LIST EMPTY?
             match list_expression {
                 ListExpression::New(new_list) => {
                     let mut literal_list: Vec<Literal> = Vec::new();
