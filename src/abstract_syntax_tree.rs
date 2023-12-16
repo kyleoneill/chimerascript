@@ -129,6 +129,13 @@ impl ChimeraScriptAST {
         }
     }
 
+    fn parse_rule_to_variable_name(pair: Pair<Rule>) -> Result<String, ChimeraCompileError> {
+        if pair.as_rule() != Rule::VariableValue {return Err(FailedParseAST("Expected a VariableValue but got a different rule".to_owned()))}
+        let var_name_str = pair.as_str();
+        // We want to remove the opening and closing parenthesis from the var name
+        Ok(var_name_str[1..var_name_str.len() - 1].to_owned())
+    }
+
     fn parse_rule_to_value(pair: Pair<Rule>) -> Result<Value, ChimeraCompileError> {
         if pair.as_rule() != Rule::Value {return Err(FailedParseAST("expected a Rule::Value but got a different Rule variant".to_owned()))};
         let inner = pair.into_inner().peek().ok_or_else(|| return FailedParseAST("Rule::Value did not contain an inner".to_owned()))?;
@@ -137,11 +144,7 @@ impl ChimeraScriptAST {
                 let literal_value = ChimeraScriptAST::parse_rule_to_literal_value(inner)?;
                 Ok(Value::Literal(literal_value))
             },
-            Rule::VariableValue => {
-                // We want to remove the opening and closing parenthesis from the var name
-                let var_name_str = inner.as_str();
-                Ok(Value::Variable(var_name_str[1..var_name_str.len() - 1].to_owned()))
-            },
+            Rule::VariableValue => Ok(Value::Variable(ChimeraScriptAST::parse_rule_to_variable_name(inner)?)),
             _ => { Err(FailedParseAST("got an invalid Rule variant while parsing the inner of a Rule::Value".to_owned()))}
         }
     }
@@ -277,13 +280,29 @@ impl ChimeraScriptAST {
                         list_values.push(value);
                         Ok(Expression::ListExpression(ListExpression::New(list_values)))
                     },
-                    Rule::ListSingleArgOperation => {
-                        todo!();
-                        println!("lsao\n{:?}", list_expression_kind_token);
-                    },
-                    Rule::ListNoArgOperation => {
-                        todo!();
-                        println!("ohno\n{:?}", list_expression_kind_token);
+                    Rule::ListCommandExpr => {
+                        let mut list_command_expr_tokens = list_expression_kind_token.into_inner();
+                        // Save the op pair to parse last as it might depend on the third token to set its value
+                        let command_token = list_command_expr_tokens.next().ok_or_else(|| return FailedParseAST("Ran out of tokens when parsing ListCommandExpr to get a ListCommand".to_owned()))?;
+                        let variable_name_token = list_command_expr_tokens.next().ok_or_else(|| return FailedParseAST("Ran out of tokens when parsing ListCommandExpr to get a VariableValue".to_owned()))?;
+                        let list_name = ChimeraScriptAST::parse_rule_to_variable_name(variable_name_token)?;
+                        let list_command = match list_command_expr_tokens.next() {
+                            Some(value_token) => {
+                                let value = ChimeraScriptAST::parse_rule_to_value(value_token)?;
+                                match command_token.as_str() {
+                                    "APPEND" => ListCommand { list_name, operation: ListCommandOperations::Append(value) },
+                                    "REMOVE" => ListCommand { list_name, operation: ListCommandOperations::Remove(value) },
+                                    _ => return Err(FailedParseAST("Got an invalid list command while parsing a ListCommandExpr with an additional argument".to_owned()))
+                                }
+                            },
+                            None => {
+                                match command_token.as_str() {
+                                    "LENGTH" => ListCommand { list_name, operation: ListCommandOperations::Length },
+                                    _ => return Err(FailedParseAST("Got an invalid list command while parsing a ListCommandExpr".to_owned()))
+                                }
+                            }
+                        };
+                        Ok(Expression::ListExpression(ListExpression::ListArgument(list_command)))
                     },
                     _ => { return Err(FailedParseAST("ListExpression contained an invalid inner rule".to_owned())) }
                 }
@@ -487,20 +506,32 @@ impl std::fmt::Display for Literal {
 #[derive(Debug)]
 pub enum ListExpression {
     New(Vec<Value>),
-    Length(String),
-    SingleArgOp(ListArgCommand)
+    ListArgument(ListCommand)
 }
 
 #[derive(Debug)]
-pub struct ListArgCommand {
+pub struct ListCommand {
     list_name: String,
-    operation: ListArgCommandOperations
+    operation: ListCommandOperations
 }
 
 #[derive(Debug)]
-pub enum ListArgCommandOperations {
+pub enum ListCommandOperations {
     Append(Value),
-    Remove(Value)
+    Remove(Value),
+    Length
+}
+
+impl From<Statement> for ListExpression {
+    fn from(value: Statement) -> Self {
+        match value {
+            Statement::Expression(expr) => match expr {
+                Expression::ListExpression(list_command) => list_command,
+                _ => panic!("tried to use an Expression as a ListExpression when it was not one")
+            },
+            _ => panic!("tried to use a Statement as an Expression when it was not one")
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -733,5 +764,58 @@ mod ast_tests {
         assert_eq!(full_expression.key_val_pairs.len(), 2);
         assert_eq!(full_expression.key_val_pairs[0].key, "timeout".to_owned());
         assert_eq!(full_expression.key_val_pairs[0].value, Value::Literal(Literal::Int(60)));
+    }
+
+    #[test]
+    /// Test the LIST command
+    fn list_expression() {
+        let new_list_expression: ListExpression = str_to_ast("LIST NEW [1, true, \"hello world\", (my_var)]").statement.into();
+        match new_list_expression {
+            ListExpression::New(list_values) => {
+                assert_eq!(list_values.len(), 4, "Expected list values to contain 4 values when 4 were provided to LIST NEW");
+                assert_eq!(list_values[0], Value::Literal(Literal::Int(1)), "When passing a 1 as the first list value, should have gotten a Value Literal Int");
+                assert_eq!(list_values[1], Value::Literal(Literal::Bool(true)), "When passing a true as the second list value, should have gotten a Value Literal Bool");
+                assert_eq!(list_values[2], Value::Literal(Literal::Str("hello world".to_owned())), "When passing a \"hello world\" as the third list value, should have gotten a Value Literal Str");
+                assert_eq!(list_values[3], Value::Variable("my_var".to_string()), "When passing a (my_var) as the fourth list value, should have gotten a Value Variable");
+            }
+            ListExpression::ListArgument(_) => panic!("Got a ListExpression::ListArgument variant when a ListExpression::New was expected")
+        }
+        let list_append_expression: ListExpression = str_to_ast("LIST APPEND (my_list) 5").statement.into();
+        match list_append_expression {
+            ListExpression::New(_) => panic!("Got a ListExpression::New variant when a ListExpression::ListArgument was expected"),
+            ListExpression::ListArgument(list_command) => {
+                assert_eq!(list_command.list_name.as_str(), "my_list", "Expected ListCommand to have a list_name of my_list when the command used that as the list variable name");
+                match list_command.operation {
+                    ListCommandOperations::Append(append_val) => {
+                        assert_eq!(append_val, Value::Literal(Literal::Int(5)), "Expected ListCommand's Append operation to contain a Literal Int 5 when the APPEND command was given a 5");
+                    },
+                    _ => panic!("Expected ListCommand's operation field to be of the Append variant when using an APPEND command but it wasn't")
+                }
+            }
+        }
+        let list_remove_expression: ListExpression = str_to_ast("LIST REMOVE (my_list) 10").statement.into();
+        match list_remove_expression {
+            ListExpression::New(_) => panic!("Got a ListExpression::New variant when a ListExpression::ListArgument was expected"),
+            ListExpression::ListArgument(list_command) => {
+                assert_eq!(list_command.list_name.as_str(), "my_list", "Expected ListCommand to have a list_name of my_list when the command used that as the list variable name");
+                match list_command.operation {
+                    ListCommandOperations::Remove(remove_val) => {
+                        assert_eq!(remove_val, Value::Literal(Literal::Int(10)), "Expected ListCommand's Append operation to contain a Literal Int 10 when the REMOVE command was given a 10");
+                    },
+                    _ => panic!("Expected ListCommand's operation field to be of the Remove variant when using an REMOVE command but it wasn't")
+                }
+            }
+        }
+        let list_length_expression: ListExpression = str_to_ast("LIST LENGTH (some_list)").statement.into();
+        match list_length_expression {
+            ListExpression::New(_) => panic!("Got a ListExpression::New variant when a ListExpression::ListArgument was expected"),
+            ListExpression::ListArgument(list_command) => {
+                assert_eq!(list_command.list_name.as_str(), "some_list", "Expected ListCommand to have a list_name of some_list when the command used that as the list variable name");
+                match list_command.operation {
+                    ListCommandOperations::Length => (),
+                    _ => panic!("Expected ListCommand's operation field to be of the Length variant when using a LENGTH command but it wasn't")
+                }
+            }
+        }
     }
 }

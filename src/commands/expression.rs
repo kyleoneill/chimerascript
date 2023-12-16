@@ -60,6 +60,7 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
             }
         },
         Expression::ListExpression(list_expression) => {
+            // during new and append, fail if we get a non Literal if a Value::Variable returns a non-LITERAL for now
             println!("{:?}", list_expression);
             todo!()
         }

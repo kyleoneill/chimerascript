@@ -28,13 +28,11 @@ KeyValuePair = ${ VariableNameAssignment ~ "=>" ~ Value } // repeatable optional
 HttpAssignment = ${ VariableNameAssignment ~ "=" ~ Value }
 
 // LIST EXPRESSION
-ListExpression = { ListNew | ListSingleArgOperation | ListNoArgOperation }
+ListExpression = { ListNew | ListCommandExpr }
 ListNew = { "NEW" ~ "[" ~ CommaSeparatedValues* ~ Value ~ "]" }
 CommaSeparatedValues = { Value ~ "," }
-ListNoArgOperation = { ListNoArgOperations ~ VariableValue }
-ListNoArgOperations = { "LENGTH" }
-ListSingleArgOperation = { ListSingleArgOperations ~ VariableValue ~ Value }
-ListSingleArgOperations = { "APPEND" | "REMOVE" }
+ListCommandExpr = { ListCommand ~ VariableValue ~ Value? }
+ListCommand = { "LENGTH" | "APPEND" | "REMOVE" }
 
 
 // GENERAL USE
