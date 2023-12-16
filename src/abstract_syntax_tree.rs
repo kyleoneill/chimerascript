@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Formatter;
 use pest::iterators::{Pair, Pairs};
 use serde_json::Value as SerdeJsonValue;
-use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure};
+use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure, VarTypes};
 use crate::err_handle::ChimeraCompileError::FailedParseAST;
 use crate::frontend::{Rule, Context};
 
@@ -290,8 +290,8 @@ impl ChimeraScriptAST {
                             Some(value_token) => {
                                 let value = ChimeraScriptAST::parse_rule_to_value(value_token)?;
                                 match command_token.as_str() {
-                                    "APPEND" => ListCommand { list_name, operation: ListCommandOperations::Append(value) },
-                                    "REMOVE" => ListCommand { list_name, operation: ListCommandOperations::Remove(value) },
+                                    "APPEND" => ListCommand { list_name, operation: ListCommandOperations::MutateOperations(MutateListOperations::Append(value)) },
+                                    "REMOVE" => ListCommand { list_name, operation: ListCommandOperations::MutateOperations(MutateListOperations::Remove(value)) },
                                     _ => return Err(FailedParseAST("Got an invalid list command while parsing a ListCommandExpr with an additional argument".to_owned()))
                                 }
                             },
@@ -420,10 +420,27 @@ impl Value {
                         },
                         AssignmentValue::JsonValue(json_val) => {
                             crate::util::access_json(json_val, &accessors[1..], context)
+                        },
+                        AssignmentValue::List(list) => {
+                            let index: usize = match accessors[1].parse() {
+                                Ok(res) => res,
+                                Err(_) => return Err(ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))
+                            };
+                            if index >= list.len() {
+                                return Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line))
+                            }
+                            Ok(AssignmentValue::Literal(list[index].clone()))
                         }
                     }
                 }
             }
+        }
+    }
+
+    pub fn resolve_to_literal(&self, context: &Context, variable_map: &HashMap<String, AssignmentValue>) -> Result<Literal, ChimeraRuntimeFailure> {
+        match self.resolve(context, variable_map)? {
+            AssignmentValue::Literal(literal) => Ok(literal),
+            _ => Err(ChimeraRuntimeFailure::UnsupportedOperation(context.current_line))
         }
     }
 }
@@ -511,15 +528,46 @@ pub enum ListExpression {
 
 #[derive(Debug)]
 pub struct ListCommand {
-    list_name: String,
-    operation: ListCommandOperations
+    pub list_name: String,
+    pub operation: ListCommandOperations
+}
+
+impl ListCommand {
+    pub fn list_ref<'a>(&'a self, variable_map: &'a HashMap<String, AssignmentValue>, context: &Context) -> Result<&Vec<Literal>, ChimeraRuntimeFailure> {
+        match variable_map.get(self.list_name.as_str()) {
+            Some(ret) => {
+                match ret {
+                    AssignmentValue::List(ret_list) => Ok(ret_list),
+                    _ => return Err(ChimeraRuntimeFailure::VarWrongType(self.list_name.clone(), VarTypes::List, context.current_line))
+                }
+            },
+            None => return Err(ChimeraRuntimeFailure::VarNotFound(self.list_name.clone(), context.current_line))
+        }
+    }
+
+    pub fn list_mut_ref<'a>(&'a self, variable_map: &'a mut HashMap<String, AssignmentValue>, context: &Context) -> Result<&mut Vec<Literal>, ChimeraRuntimeFailure> {
+        match variable_map.get_mut(self.list_name.as_str()) {
+            Some(ret) => {
+                match ret {
+                    AssignmentValue::List(ret_list) => Ok(ret_list),
+                    _ => return Err(ChimeraRuntimeFailure::VarWrongType(self.list_name.clone(), VarTypes::List, context.current_line))
+                }
+            },
+            None => return Err(ChimeraRuntimeFailure::VarNotFound(self.list_name.clone(), context.current_line))
+        }
+    }
 }
 
 #[derive(Debug)]
 pub enum ListCommandOperations {
-    Append(Value),
-    Remove(Value),
+    MutateOperations(MutateListOperations),
     Length
+}
+
+#[derive(Debug)]
+pub enum MutateListOperations {
+    Append(Value),
+    Remove(Value)
 }
 
 impl From<Statement> for ListExpression {
@@ -550,7 +598,8 @@ pub enum AssignmentValue {
     JsonValue(SerdeJsonValue),
     // TODO: Will also need a new variant like JsonArray for serde_json::Value::Array if the array contains
     //       maps and cannot be represented as a Literal::List when that is implemented
-    HttpResponse(HttpResponse)
+    HttpResponse(HttpResponse),
+    List(Vec<Literal>)
 }
 
 impl std::fmt::Display for AssignmentValue {
@@ -561,6 +610,10 @@ impl std::fmt::Display for AssignmentValue {
             AssignmentValue::JsonValue(json_val) => {
                 let json_str = crate::util::serde_json_to_string(json_val);
                 write!(f, "{}", json_str)
+            },
+            AssignmentValue::List(list) => {
+                let list_as_str = list.into_iter().map(|c| c.to_string()).collect::<Vec<String>>().join(", ");
+                write!(f, "[{}]", list_as_str)
             }
         }
     }
@@ -585,7 +638,8 @@ impl AssignmentValue {
                     SerdeJsonValue::Number(_) => true,
                     _ => false
                 }
-            }
+            },
+            Self::List(_) => false
         }
     }
 
@@ -616,7 +670,8 @@ impl AssignmentValue {
                     },
                     _ => panic!("Tried to convert a serde_json::Value to a num when it was not a Number")
                 }
-            }
+            },
+            Self::List(_) => panic!("Tried to convert a List to an int")
         }
     }
 }
@@ -786,8 +841,13 @@ mod ast_tests {
             ListExpression::ListArgument(list_command) => {
                 assert_eq!(list_command.list_name.as_str(), "my_list", "Expected ListCommand to have a list_name of my_list when the command used that as the list variable name");
                 match list_command.operation {
-                    ListCommandOperations::Append(append_val) => {
-                        assert_eq!(append_val, Value::Literal(Literal::Int(5)), "Expected ListCommand's Append operation to contain a Literal Int 5 when the APPEND command was given a 5");
+                    ListCommandOperations::MutateOperations(mutable_list_operations) => {
+                        match mutable_list_operations {
+                            MutateListOperations::Append(append_val) => {
+                                assert_eq!(append_val, Value::Literal(Literal::Int(5)), "Expected ListCommand's Append operation to contain a Literal Int 5 when the APPEND command was given a 5");
+                            },
+                            _ => panic!("Expected ListCommand operation to be a MutableOperation Append when using an APPEND command but it wasn't")
+                        }
                     },
                     _ => panic!("Expected ListCommand's operation field to be of the Append variant when using an APPEND command but it wasn't")
                 }
@@ -799,8 +859,13 @@ mod ast_tests {
             ListExpression::ListArgument(list_command) => {
                 assert_eq!(list_command.list_name.as_str(), "my_list", "Expected ListCommand to have a list_name of my_list when the command used that as the list variable name");
                 match list_command.operation {
-                    ListCommandOperations::Remove(remove_val) => {
-                        assert_eq!(remove_val, Value::Literal(Literal::Int(10)), "Expected ListCommand's Append operation to contain a Literal Int 10 when the REMOVE command was given a 10");
+                    ListCommandOperations::MutateOperations(mutable_list_operations) => {
+                        match mutable_list_operations {
+                            MutateListOperations::Remove(remove_val) => {
+                                assert_eq!(remove_val, Value::Literal(Literal::Int(10)), "Expected ListCommand's Remove operation to contain a Literal Int 10 when the REMOVE command was given a 10");
+                            },
+                            _ => panic!("Expected ListCommand operation to be a MutableOperation Remove when using a REMOVE command but it wasn't")
+                        }
                     },
                     _ => panic!("Expected ListCommand's operation field to be of the Remove variant when using an REMOVE command but it wasn't")
                 }
