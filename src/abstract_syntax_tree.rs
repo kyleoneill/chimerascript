@@ -599,11 +599,10 @@ pub enum HTTPVerb {
 #[derive(Clone, PartialEq, Debug)]
 pub enum AssignmentValue {
     Literal(Literal),
-    // TODO: We should be storing a serde_json::Value::Object here rather than a serde_json::Value,
-    //       that way literals can only ever be represented in one way (my Literal variant)
+    // TODO: Remove JsonValue and store the serde_json::Value by breaking it into the
+    //       Literal and List variants. Will need a new Object variant which holds a
+    //       HashMap<String, Self> to represent a serde_json::Value::Object
     JsonValue(SerdeJsonValue),
-    // TODO: Will also need a new variant like JsonArray for serde_json::Value::Array if the array contains
-    //       maps and cannot be represented as a Literal::List when that is implemented
     HttpResponse(HttpResponse),
     List(Vec<Literal>)
 }

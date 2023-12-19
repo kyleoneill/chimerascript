@@ -60,8 +60,10 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
         },
         Expression::ListExpression(list_expression) => {
             // TODO: Add a LIST POP
-            // TODO: Add the ability to make an empty list, it currently _must_ be initialized with one value
-            // TODO: Add a LIST EMPTY?
+            // TODO: Add the ability to make an empty list, it currently _must_ be initialized with one value.
+            //       In grammar.pest will need to edit ListNew to look like { ... ~ Value? } to allow the last value to be present
+            //       0 or 1 times and then will need to update the AST to handle the now optional token correctly
+            // TODO: Add a LIST EMPTY to empty a list in one op rather than removing repeatedly?
             match list_expression {
                 ListExpression::New(new_list) => {
                     let mut literal_list: Vec<Literal> = Vec::new();
