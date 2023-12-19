@@ -32,6 +32,12 @@
       steps:
         - var list_len = LIST LENGTH (my_list)
         - ASSERT LENGTH (my_list) (list_len)
+    - case: list-contains-pass
+      steps:
+        - ASSERT CONTAINS (my_list) 2
+        - ASSERT CONTAINS (my_list) "hello world"
+        - var two = LITERAL 2
+        - ASSERT CONTAINS (my_list) (two)
 - case: list-bad-remove-index
   steps:
     - var my_list = LIST NEW [6]
@@ -43,3 +49,7 @@
   steps:
     - var my_num = LITERAL 5
     - ASSERT LENGTH (my_num) 5
+- case: list-contains-fail
+  steps:
+    - var foo = LITERAL 5
+    - ASSERT CONTAINS (foo) 10

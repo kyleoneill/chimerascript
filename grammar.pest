@@ -13,7 +13,7 @@ Expression = { HttpCommand | "LITERAL" ~ LiteralValue | "LIST" ~ ListExpression 
 // This looks like `ASSERT EQUALS (my_var.foo) 5 "FailureMessage"`
 AssertCommand = { "ASSERT" ~ Negation? ~ AssertSubCommand ~ Value ~ Value ~ QuoteString? }
 Negation = { "NOT" }
-AssertSubCommand = { "EQUALS" | "GTE" | "GT" | "LTE" | "LT" | "STATUS" | "LENGTH" }
+AssertSubCommand = { "EQUALS" | "GTE" | "GT" | "LTE" | "LT" | "STATUS" | "LENGTH" | "CONTAINS" }
 PrintCommand = { "PRINT" ~ Value }
 
 // HTTP EXPRESSION

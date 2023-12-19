@@ -20,7 +20,9 @@ impl ChimeraCompileError {
 pub enum VarTypes {
     Int,
     HttpResponse,
-    List
+    List,
+    Containable,
+    Primitive
 }
 
 impl Display for VarTypes {
@@ -28,7 +30,9 @@ impl Display for VarTypes {
         match self {
             VarTypes::Int => write!(f, "Int"),
             VarTypes::HttpResponse => write!(f, "HttpResponse"),
-            VarTypes::List => write!(f, "List")
+            VarTypes::List => write!(f, "List"),
+            VarTypes::Containable => write!(f, "List or Object"),
+            VarTypes::Primitive => write!(f, "int, bool, or string")
         }
     }
 }
@@ -44,7 +48,7 @@ pub enum ChimeraRuntimeFailure {
     JsonBadNumberRead(i32),
     TriedToIndexWithNonNumber(i32),
     OutOfBounds(i32),
-    UnsupportedOperation(i32)
+    UnsupportedOperation(String, i32)
 }
 
 impl Display for ChimeraRuntimeFailure {
@@ -69,7 +73,7 @@ impl Display for ChimeraRuntimeFailure {
             ChimeraRuntimeFailure::JsonBadNumberRead(line) => write!(f, "ERROR on line {}: Tried to read a JSON number which cannot be represented by a supported number field", line),
             ChimeraRuntimeFailure::TriedToIndexWithNonNumber(line) => write!(f, "ERROR on line {}: Tried to index an array with a non-numerical value", line),
             ChimeraRuntimeFailure::OutOfBounds(line) => write!(f, "ERROR on line {}: Tried to access an array with an out-of-bounds value", line),
-            ChimeraRuntimeFailure::UnsupportedOperation(line) => write!(f, "ERROR on line {}: This operation is not currently supported", line)
+            ChimeraRuntimeFailure::UnsupportedOperation(operation, line) => write!(f, "ERROR on line {}: {} is not currently supported", line, operation)
         }
     }
 }

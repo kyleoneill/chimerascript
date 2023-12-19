@@ -36,6 +36,30 @@ pub fn assert_command(context: &Context, assert_command: AssertCommand, variable
                 _ => return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.left_value.error_print(), VarTypes::HttpResponse, context.current_line))
             }
         },
+        AssertSubCommand::CONTAINS => {
+            match &left_value {
+                AssignmentValue::List(list) => {
+                    match right_value.resolve_to_literal() {
+                        Some(right_literal) => {
+                            list.contains(right_literal)
+                        },
+                        None => return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.right_value.error_print(), VarTypes::Primitive, context.current_line))
+                    }
+                },
+                // TODO: Support ASSERT CONTAINS for Json<Object> and Json<Array>
+                //       Headache: Json<Object> must be indexed here by a string, and a Json<Array<Json>>
+                //       must be indexed by a number but can return something that MIGHT be convertable to a
+                //       LITERAL but might also be an Object?
+                //       This is probably another knot that must be resolved by converting a JSON object immediately to
+                //       some custom AssignmentValue variant to strip every non-Object into a Literal
+                // If left is a serde_json::Value<Array> then right must be ?, depends on how ^ is resolved
+                // If left is a serde_json::Value<Object> then right must be a string
+                AssignmentValue::JsonValue(_json_value) => {
+                    return Err(ChimeraRuntimeFailure::UnsupportedOperation("Using CONTAINS on a non-list".to_owned(), context.current_line))
+                }
+                _ => return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.left_value.error_print(), VarTypes::Containable, context.current_line))
+            }
+        },
         _ => {
             // The remaining matches are the four relational operators, left_value and
             // right_value must be ints for all four

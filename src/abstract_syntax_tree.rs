@@ -64,6 +64,7 @@ impl ChimeraScriptAST {
                     "LT" => AssertSubCommand::LT,
                     "STATUS" => AssertSubCommand::STATUS,
                     "LENGTH" => AssertSubCommand::LENGTH,
+                    "CONTAINS" => AssertSubCommand::CONTAINS,
                     _ => return Err(FailedParseAST("Rule::AssertSubcommand contained an invalid value".to_owned()))
                 };
 
@@ -441,7 +442,7 @@ impl Value {
     pub fn resolve_to_literal(&self, context: &Context, variable_map: &HashMap<String, AssignmentValue>) -> Result<Literal, ChimeraRuntimeFailure> {
         match self.resolve(context, variable_map)? {
             AssignmentValue::Literal(literal) => Ok(literal),
-            _ => Err(ChimeraRuntimeFailure::UnsupportedOperation(context.current_line))
+            _ => Err(ChimeraRuntimeFailure::UnsupportedOperation("Using a non-primitive value in this way".to_owned(), context.current_line))
         }
     }
 }
@@ -454,7 +455,8 @@ pub enum AssertSubCommand {
     LTE,
     LT,
     STATUS,
-    LENGTH
+    LENGTH,
+    CONTAINS
 }
 
 impl std::fmt::Display for AssertSubCommand {
@@ -466,7 +468,8 @@ impl std::fmt::Display for AssertSubCommand {
             AssertSubCommand::LTE => write!(f, "be less than or equal to"),
             AssertSubCommand::LT => write!(f, "be less than"),
             AssertSubCommand::STATUS => write!(f, "have a status code of"),
-            AssertSubCommand::LENGTH => write!(f, "have a length of")
+            AssertSubCommand::LENGTH => write!(f, "have a length of"),
+            AssertSubCommand::CONTAINS => write!(f, "to contain")
         }
     }
 }
@@ -677,6 +680,13 @@ impl AssignmentValue {
             Self::List(_) => panic!("Tried to convert a List to an int")
         }
     }
+
+    pub fn resolve_to_literal(&self) -> Option<&Literal> {
+        match self {
+            Self::Literal(literal) => Some(literal),
+            _ => None
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -749,8 +759,8 @@ mod ast_tests {
     #[test]
     /// Test the ASSERT subcommands; EQUALS, GTE, GT, LTE, LT, STATUS
     fn assertion_subcommands() {
-        let trees: Vec<AssertCommand> = ["ASSERT EQUALS 1 1", "ASSERT GTE 1 1", "ASSERT GT 1 1", "ASSERT LTE 1 1", "ASSERT LT 1 1", "ASSERT STATUS 1 1", "ASSERT LENGTH (foo) 1"].into_iter().map(|x| str_to_ast(x).statement.into()).collect();
-        assert_eq!(trees.len(), 7);
+        let trees: Vec<AssertCommand> = ["ASSERT EQUALS 1 1", "ASSERT GTE 1 1", "ASSERT GT 1 1", "ASSERT LTE 1 1", "ASSERT LT 1 1", "ASSERT STATUS 1 1", "ASSERT LENGTH (foo) 1", "ASSERT CONTAINS (foo) 1"].into_iter().map(|x| str_to_ast(x).statement.into()).collect();
+        assert_eq!(trees.len(), 8);
         assert_eq!(trees[0].subcommand, AssertSubCommand::EQUALS);
         assert_eq!(trees[1].subcommand, AssertSubCommand::GTE);
         assert_eq!(trees[2].subcommand, AssertSubCommand::GT);
@@ -758,6 +768,7 @@ mod ast_tests {
         assert_eq!(trees[4].subcommand, AssertSubCommand::LT);
         assert_eq!(trees[5].subcommand, AssertSubCommand::STATUS);
         assert_eq!(trees[6].subcommand, AssertSubCommand::LENGTH);
+        assert_eq!(trees[7].subcommand, AssertSubCommand::CONTAINS);
     }
 
     #[test]

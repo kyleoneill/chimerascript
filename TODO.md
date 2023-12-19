@@ -30,6 +30,16 @@
 - Support for running a test by name
   - Accessed with args.name in main.rs
 - Test tagging?
-- Ability to create a list
-  - `var my_list = LITERAL '[1,2,3]'`
-  - `var my_list = LIST NEW '[1,2,3]'`
+- Script documentation
+
+----
+
+- Lexing?
+  - Pest rule pairs contain metadata about the matched token, like the
+    start and stop position in the string where it matched from. Should
+    this information be stored? Is there error-handling/debugging use for it?
+- Refactor AST file
+  - Break up large functions into more `parse_rule_to_x` functions
+  - Rename variables that don't really describe the rule pairs correctly
+  - Generally make it more readable
+- Update README as progress moves
