@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::fmt::Formatter;
 use pest::iterators::{Pair, Pairs};
-use serde_json::Value as SerdeJsonValue;
+use serde::de::{Deserialize, Error, MapAccess, SeqAccess, Visitor};
+use serde::Deserializer;
 use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure, VarTypes};
 use crate::err_handle::ChimeraCompileError::FailedParseAST;
 use crate::frontend::{Rule, Context};
@@ -392,20 +393,15 @@ impl Value {
                 // TODO: Is there a way to make this method return a ref? clone might be
                 //       expensive for large AssignmentValues, like for a big web response.
                 //       I think I want to use a Cow here, as that is used for enums that can
-                //       have variants which might be borrowed or owned
+                //       have variants which might be borrowed or owned. Applies for both what's returned from if
+                //       and else blocks
                 if accessors.len() == 1 {
                     return Ok(value.clone())
                 }
                 else {
                     match value {
-                        AssignmentValue::Literal(literal) => {
-                            match literal.resolve_access(accessors, context) {
-                                Ok(resolved) => Ok(AssignmentValue::Literal(resolved.to_owned())),
-                                Err(e) => return Err(e)
-                            }
-                        },
+                        AssignmentValue::Literal(literal) => { Ok(AssignmentValue::Literal(literal.resolve_access(accessors, context)?.to_owned())) },
                         AssignmentValue::HttpResponse(http_response) => {
-
                             match accessors[1] {
                                 "status_code" => {
                                     if accessors.len() != 2 {
@@ -414,12 +410,12 @@ impl Value {
                                     Ok(AssignmentValue::Literal(Literal::Number(http_response.status_code as i64)))
                                 },
                                 "body" => {
-                                    if accessors.len() == 2 {
-                                        Ok(AssignmentValue::Literal(crate::util::access_json(&http_response.body, &[], context)?))
+                                    // have to re-format accessors here to slice out [1]?
+                                    let mut without_body_accessor = vec![accessors[0]];
+                                    if accessors.len() > 2 {
+                                        without_body_accessor.append(&mut accessors[2..].to_vec());
                                     }
-                                    else {
-                                        Ok(AssignmentValue::Literal(crate::util::access_json(&http_response.body, &accessors[2..], context)?))
-                                    }
+                                    Ok(AssignmentValue::Literal(http_response.body.resolve_access(without_body_accessor, context)?.to_owned()))
                                 },
                                 _ => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(accessors[0].to_string()), accessors[1].to_string(), context.current_line))
                             }
@@ -500,6 +496,8 @@ pub struct KeyValuePair {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Literal {
     String(String),
+    // TODO: Need better number support here for floats and u64s and maybe even bigints?
+    //       Also I think this to do is duplicated in more than one location, search for/resolve them all when done
     Number(i64),
     Bool(bool),
     Null,
@@ -567,6 +565,67 @@ impl Literal {
             Self::Number(i) => Some(*i),
             _ => None
         }
+    }
+}
+
+impl <'de> Deserialize<'de> for Literal {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
+        struct LiteralVisitor;
+        impl<'de> Visitor<'de> for LiteralVisitor {
+            type Value = Literal;
+            fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
+                formatter.write_str("any valid JSON value")
+            }
+            fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E> where E: Error {
+                Ok(Literal::Bool(v))
+            }
+            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> where E: Error {
+                Ok(Literal::Number(v))
+            }
+            // TODO: impl real values for u64 and f64 here
+            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> where E: Error {
+                Ok(Literal::Number(v as i64))
+            }
+            fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E> where E: Error {
+                Ok(Literal::Number(v as i64))
+            }
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> where E: Error {
+                self.visit_string(String::from(v))
+            }
+            fn visit_string<E>(self, v: String) -> Result<Self::Value, E> where E: Error {
+                Ok(Literal::String(v))
+            }
+            fn visit_none<E>(self) -> Result<Self::Value, E> where E: Error {
+                Ok(Literal::Null)
+            }
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error> where D: Deserializer<'de> {
+                Deserialize::deserialize(deserializer)
+            }
+            fn visit_unit<E>(self) -> Result<Self::Value, E> where E: Error {
+                Ok(Literal::Null)
+            }
+            fn visit_seq<A>(self, mut visitor: A) -> Result<Self::Value, A::Error> where A: SeqAccess<'de> {
+                let mut vec = Vec::new();
+                while let Some(member) = visitor.next_element()? {
+                    vec.push(member)
+                }
+                Ok(Literal::List(vec))
+            }
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error> where A: MapAccess<'de> {
+                match map.next_key()? {
+                    Some(first_key) => {
+                        let mut values: HashMap<String, Literal> = HashMap::new();
+                        values.insert(first_key, map.next_value()?);
+                        while let Some((key, value)) = map.next_entry()? {
+                            values.insert(key, value);
+                        }
+                        Ok(Literal::Object(values))
+                    },
+                    None => Ok(Literal::Object(HashMap::new()))
+                }
+            }
+        }
+        deserializer.deserialize_any(LiteralVisitor)
     }
 }
 
@@ -690,7 +749,7 @@ impl AssignmentValue {
 pub struct HttpResponse {
     // TODO: Store header data?
     pub status_code: u16,
-    pub body: SerdeJsonValue,
+    pub body: Literal,
     // TODO: Resolve error handling better, this adds code smell and this field shouldn't be here
     pub var_name: String
 }

@@ -3,7 +3,6 @@ use crate::abstract_syntax_tree::{AssignmentValue, Expression, HTTPVerb, HttpRes
 use crate::err_handle::ChimeraRuntimeFailure;
 use crate::frontend::Context;
 use crate::WEB_REQUEST_DOMAIN;
-use serde_json::Value;
 
 pub fn expression_command(context: &Context, expression: Expression, variable_map: &mut HashMap<String, AssignmentValue>, web_client: &reqwest::blocking::Client, variable_name: Option<String>) -> Result<AssignmentValue, ChimeraRuntimeFailure> {
     match expression {
@@ -11,7 +10,7 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
             Ok(AssignmentValue::Literal(literal))
         },
         Expression::HttpCommand(http_command) => {
-            // Build our URL from the domain and our path
+            // Build URL from the domain and path
             let domain = WEB_REQUEST_DOMAIN.get().expect("Failed to get static global domain when resolving an HTTP expression");
             let mut resolved_path: String = domain.clone();
             resolved_path.push_str(http_command.path.as_str());
@@ -50,7 +49,7 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                 Ok(response) => {
                     // Have to store the status here as reading the body consumes the response
                     let status_code = response.status().as_u16();
-                    let body: Value = response.json().unwrap_or_else(|_| Value::Null);
+                    let body: Literal = response.json().unwrap_or_else(|_| Literal::Null);
                     let http_response = HttpResponse{ status_code, body, var_name: variable_name.expect("Resolved an expression to set a variable without passing the variable name") };
                     Ok(AssignmentValue::HttpResponse(http_response))
                 },
