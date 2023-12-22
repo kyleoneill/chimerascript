@@ -44,8 +44,6 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                 }
             };
             match res {
-                // TODO: Duplicate comment here and in util/mod.rs but should be deserializing body right into a
-                //       Literal. Look at how serde_json de-serializes the json blob into a serde_json::Value
                 Ok(response) => {
                     // Have to store the status here as reading the body consumes the response
                     let status_code = response.status().as_u16();
