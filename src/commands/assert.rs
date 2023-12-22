@@ -8,10 +8,10 @@ pub fn assert_command(context: &Context, assert_command: AssertCommand, variable
     let right_value = assert_command.right_value.resolve_to_literal(context, variable_map)?;
     let assertion_passed = match assert_command.subcommand {
         AssertSubCommand::LENGTH => {
-            let assert_len = right_value.to_number_or_error(&assert_command.right_value, context)? as usize;
+            let assert_len = right_value.try_into_number(&assert_command.right_value, context)? as usize;
             match &left_value {
                 AssignmentValue::Literal(literal) => {
-                    let vec = literal.to_list_or_error(&assert_command.left_value, context)?;
+                    let vec = literal.try_into_list(&assert_command.left_value, context)?;
                     vec.len() == assert_len
                 },
                 _ => return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.left_value.error_print(), VarTypes::Literal, context.current_line))
@@ -26,7 +26,7 @@ pub fn assert_command(context: &Context, assert_command: AssertCommand, variable
         AssertSubCommand::STATUS => {
             match &left_value {
                 AssignmentValue::HttpResponse(ref http_response) => {
-                    let expected_code = right_value.to_number_or_error(&assert_command.right_value, context)?;
+                    let expected_code = right_value.try_into_number(&assert_command.right_value, context)?;
                     http_response.status_code as i64 == expected_code
                 },
                 _ => return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.left_value.error_print(), VarTypes::HttpResponse, context.current_line))
@@ -40,7 +40,7 @@ pub fn assert_command(context: &Context, assert_command: AssertCommand, variable
                             list.contains(&right_value)
                         },
                         Literal::Object(map) => {
-                            let key = right_value.to_string_or_error(&assert_command.right_value, context)?;
+                            let key = right_value.try_into_string(&assert_command.right_value, context)?;
                             map.contains_key(key)
                         },
                         _ => return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.left_value.error_print(), VarTypes::Containable, context.current_line))
@@ -60,8 +60,8 @@ pub fn assert_command(context: &Context, assert_command: AssertCommand, variable
                 Some(literal) => literal,
                 None => return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.left_value.error_print(), VarTypes::Int, context.current_line))
             };
-            let numeric_left = literal_left.to_number_or_error(&assert_command.left_value, context)?;
-            let numeric_right = right_value.to_number_or_error(&assert_command.right_value, context)?;
+            let numeric_left = literal_left.try_into_number(&assert_command.left_value, context)?;
+            let numeric_right = right_value.try_into_number(&assert_command.right_value, context)?;
             match assert_command.subcommand {
                 AssertSubCommand::GTE => {
                     numeric_left >= numeric_right

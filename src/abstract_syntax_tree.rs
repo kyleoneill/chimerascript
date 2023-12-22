@@ -577,13 +577,13 @@ impl Literal {
             _ => None
         }
     }
-    pub fn to_number_or_error(&self, came_from: &Value, context: &Context) -> Result<i64, ChimeraRuntimeFailure> {
+    pub fn try_into_number(&self, came_from: &Value, context: &Context) -> Result<i64, ChimeraRuntimeFailure> {
         Ok(self.to_number().ok_or_else(|| return ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::Int, context.current_line))?)
     }
-    pub fn to_list_or_error(&self, came_from: &Value, context: &Context) -> Result<&Vec<Self>, ChimeraRuntimeFailure> {
+    pub fn try_into_list(&self, came_from: &Value, context: &Context) -> Result<&Vec<Self>, ChimeraRuntimeFailure> {
         Ok(self.to_list().ok_or_else(|| return ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::List, context.current_line))?)
     }
-    pub fn to_string_or_error(&self, came_from: &Value, context: &Context) -> Result<&str, ChimeraRuntimeFailure> {
+    pub fn try_into_string(&self, came_from: &Value, context: &Context) -> Result<&str, ChimeraRuntimeFailure> {
         Ok(self.internal_to_string().ok_or_else(|| return ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::String, context.current_line))?)
     }
 }
