@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::fmt::Formatter;
 use pest::iterators::{Pair, Pairs};
-use serde_json::Value as SerdeJsonValue;
+use serde::de::{Deserialize, Error, MapAccess, SeqAccess, Visitor};
+use serde::Deserializer;
 use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure, VarTypes};
 use crate::err_handle::ChimeraCompileError::FailedParseAST;
 use crate::frontend::{Rule, Context};
@@ -155,8 +156,9 @@ impl ChimeraScriptAST {
         // A literal can be an int, a bool, or a string. Check to see if it's an int
         // or bool before setting it to be a string
         if pair.as_rule() != Rule::LiteralValue { return Err(FailedParseAST("Expected a Rule::LiteralValue but got a different Rule variant".to_owned())) }
+        // TODO: Better number handling than just setting every number to an i64
         match pair.as_str().parse::<i64>() {
-            Ok(res) => return Ok(Literal::Int(res)),
+            Ok(res) => return Ok(Literal::Number(res)),
             Err(_) => ()
         };
         let res = match pair.as_str() {
@@ -172,7 +174,7 @@ impl ChimeraScriptAST {
                     Some(first_inner) => {
                         match first_inner.into_inner().peek() {
                             Some(second_inner) => {
-                                Literal::Str(second_inner.as_str().to_owned())
+                                Literal::String(second_inner.as_str().to_owned())
                             },
                             None => return Err(FailedParseAST("Failed to get tokens for a Literal String value".to_owned()))
                         }
@@ -391,47 +393,31 @@ impl Value {
                 // TODO: Is there a way to make this method return a ref? clone might be
                 //       expensive for large AssignmentValues, like for a big web response.
                 //       I think I want to use a Cow here, as that is used for enums that can
-                //       have variants which might be borrowed or owned
+                //       have variants which might be borrowed or owned. Applies for both what's returned from if
+                //       and else blocks
                 if accessors.len() == 1 {
                     return Ok(value.clone())
                 }
                 else {
                     match value {
-                        AssignmentValue::Literal(_literal) => {
-                            // TODO: Add support here for indexing a Literal::List when that's added
-                            Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(accessors[0].to_string()), accessors[1].to_string(), context.current_line))
-                        },
+                        AssignmentValue::Literal(literal) => { Ok(AssignmentValue::Literal(literal.resolve_access(accessors, context)?.to_owned())) },
                         AssignmentValue::HttpResponse(http_response) => {
                             match accessors[1] {
                                 "status_code" => {
                                     if accessors.len() != 2 {
                                         return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(accessors[0].to_string()), accessors[2].to_string(), context.current_line))
                                     }
-                                    Ok(AssignmentValue::Literal(Literal::Int(http_response.status_code as i64)))
+                                    Ok(AssignmentValue::Literal(Literal::Number(http_response.status_code as i64)))
                                 },
                                 "body" => {
-                                    if accessors.len() == 2 {
-                                        Ok(AssignmentValue::JsonValue(http_response.body.clone()))
+                                    let mut without_body_accessor = vec![accessors[0]];
+                                    if accessors.len() > 2 {
+                                        without_body_accessor.append(&mut accessors[2..].to_vec());
                                     }
-                                    else {
-                                        crate::util::access_json(&http_response.body, &accessors[2..], context)
-                                    }
+                                    Ok(AssignmentValue::Literal(http_response.body.resolve_access(without_body_accessor, context)?.to_owned()))
                                 },
                                 _ => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(accessors[0].to_string()), accessors[1].to_string(), context.current_line))
                             }
-                        },
-                        AssignmentValue::JsonValue(json_val) => {
-                            crate::util::access_json(json_val, &accessors[1..], context)
-                        },
-                        AssignmentValue::List(list) => {
-                            let index: usize = match accessors[1].parse() {
-                                Ok(res) => res,
-                                Err(_) => return Err(ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))
-                            };
-                            if index >= list.len() {
-                                return Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line))
-                            }
-                            Ok(AssignmentValue::Literal(list[index].clone()))
                         }
                     }
                 }
@@ -442,7 +428,7 @@ impl Value {
     pub fn resolve_to_literal(&self, context: &Context, variable_map: &HashMap<String, AssignmentValue>) -> Result<Literal, ChimeraRuntimeFailure> {
         match self.resolve(context, variable_map)? {
             AssignmentValue::Literal(literal) => Ok(literal),
-            _ => Err(ChimeraRuntimeFailure::UnsupportedOperation("Using a non-primitive value in this way".to_owned(), context.current_line))
+            _ => Err(ChimeraRuntimeFailure::VarWrongType(self.error_print(), VarTypes::Literal, context.current_line))
         }
     }
 }
@@ -506,23 +492,160 @@ pub struct KeyValuePair {
     value: Value
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Literal {
-    // TODO: Add support for a List(Vec<Self>)
-    Str(String),
-    Int(i64),
+    String(String),
+    // TODO: Need better number support here for floats and u64s and maybe even bigints?
+    //       Also I think this to do is duplicated in more than one location, search for/resolve them all when done
+    Number(i64),
     Bool(bool),
-    Null
+    Null,
+    Object(HashMap<String, Self>),
+    List(Vec<Self>)
 }
 
 impl std::fmt::Display for Literal {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Literal::Str(str) => write!(f, "{}", str),
-            Literal::Int(int) => write!(f, "{}", int),
+            Literal::String(str) => write!(f, "{}", str),
+            Literal::Number(int) => write!(f, "{}", int),
             Literal::Bool(bool) => write!(f, "{}", bool),
-            Literal::Null => write!(f, "<null>")
+            Literal::Null => write!(f, "<null>"),
+            Literal::Object(object) => {
+                for (key, val) in object.iter() {
+                    let val_string = val.to_string();
+                    write!(f, "{{\"{}\"}}\":\"{{{}}}\"", key, val_string)?;
+                }
+                Ok(())
+            },
+            Literal::List(list) => {
+                let list_as_str = list.into_iter().map(|c| c.to_string()).collect::<Vec<String>>().join(", ");
+                write!(f, "[{}]", list_as_str)
+            }
         }
+    }
+}
+
+impl Literal {
+    fn resolve_access(&self, mut accessors: Vec<&str>, context: &Context) -> Result<&Self, ChimeraRuntimeFailure> {
+        accessors.reverse();
+        let var_name = match accessors.len() {
+            0 => return Err(ChimeraRuntimeFailure::InternalError("resolving the access of a Literal".to_string())),
+            _ => accessors.pop().unwrap().to_owned()
+        };
+        let mut pointer = self;
+        while accessors.len() != 0 {
+            let accessor = accessors.pop().unwrap();
+            match pointer {
+                Literal::Object(obj) => {
+                    pointer = match obj.get(accessor) {
+                        Some(val) => val,
+                        None => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(var_name), accessor.to_string(), context.current_line))
+                    }
+                },
+                Literal::List(arr) => {
+                    let index: usize = match accessor.parse() {
+                        Ok(i) => i,
+                        Err(_) => return Err(ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))
+                    };
+                    if index >= arr.len() { return Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line)) }
+                    pointer = &arr[index];
+                },
+                _ => break
+            }
+        }
+        if accessors.len() > 0 {
+            return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(var_name), accessors[accessors.len() - 2].to_string(), context.current_line))
+        }
+        Ok(pointer)
+    }
+    pub fn to_number(&self) -> Option<i64> {
+        match self {
+            Self::Number(i) => Some(*i),
+            _ => None
+        }
+    }
+    fn to_list(&self) -> Option<&Vec<Self>> {
+        match self {
+            Self::List(list) => Some(list),
+            _ => None
+        }
+    }
+    fn internal_to_string(&self) -> Option<&str> {
+        match self {
+            Self::String(string) => Some(string.as_str()),
+            _ => None
+        }
+    }
+    pub fn try_into_number(&self, came_from: &Value, context: &Context) -> Result<i64, ChimeraRuntimeFailure> {
+        Ok(self.to_number().ok_or_else(|| return ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::Int, context.current_line))?)
+    }
+    pub fn try_into_list(&self, came_from: &Value, context: &Context) -> Result<&Vec<Self>, ChimeraRuntimeFailure> {
+        Ok(self.to_list().ok_or_else(|| return ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::List, context.current_line))?)
+    }
+    pub fn try_into_string(&self, came_from: &Value, context: &Context) -> Result<&str, ChimeraRuntimeFailure> {
+        Ok(self.internal_to_string().ok_or_else(|| return ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::String, context.current_line))?)
+    }
+}
+
+impl <'de> Deserialize<'de> for Literal {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
+        struct LiteralVisitor;
+        impl<'de> Visitor<'de> for LiteralVisitor {
+            type Value = Literal;
+            fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
+                formatter.write_str("any valid JSON value")
+            }
+            fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E> where E: Error {
+                Ok(Literal::Bool(v))
+            }
+            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> where E: Error {
+                Ok(Literal::Number(v))
+            }
+            // TODO: impl real values for u64 and f64 here
+            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> where E: Error {
+                Ok(Literal::Number(v as i64))
+            }
+            fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E> where E: Error {
+                Ok(Literal::Number(v as i64))
+            }
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> where E: Error {
+                self.visit_string(String::from(v))
+            }
+            fn visit_string<E>(self, v: String) -> Result<Self::Value, E> where E: Error {
+                Ok(Literal::String(v))
+            }
+            fn visit_none<E>(self) -> Result<Self::Value, E> where E: Error {
+                Ok(Literal::Null)
+            }
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error> where D: Deserializer<'de> {
+                Deserialize::deserialize(deserializer)
+            }
+            fn visit_unit<E>(self) -> Result<Self::Value, E> where E: Error {
+                Ok(Literal::Null)
+            }
+            fn visit_seq<A>(self, mut visitor: A) -> Result<Self::Value, A::Error> where A: SeqAccess<'de> {
+                let mut vec = Vec::new();
+                while let Some(member) = visitor.next_element()? {
+                    vec.push(member)
+                }
+                Ok(Literal::List(vec))
+            }
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error> where A: MapAccess<'de> {
+                match map.next_key()? {
+                    Some(first_key) => {
+                        let mut values: HashMap<String, Literal> = HashMap::new();
+                        values.insert(first_key, map.next_value()?);
+                        while let Some((key, value)) = map.next_entry()? {
+                            values.insert(key, value);
+                        }
+                        Ok(Literal::Object(values))
+                    },
+                    None => Ok(Literal::Object(HashMap::new()))
+                }
+            }
+        }
+        deserializer.deserialize_any(LiteralVisitor)
     }
 }
 
@@ -540,26 +663,42 @@ pub struct ListCommand {
 
 impl ListCommand {
     pub fn list_ref<'a>(&'a self, variable_map: &'a HashMap<String, AssignmentValue>, context: &Context) -> Result<&Vec<Literal>, ChimeraRuntimeFailure> {
-        match variable_map.get(self.list_name.as_str()) {
+        return match variable_map.get(self.list_name.as_str()) {
             Some(ret) => {
                 match ret {
-                    AssignmentValue::List(ret_list) => Ok(ret_list),
-                    _ => return Err(ChimeraRuntimeFailure::VarWrongType(self.list_name.clone(), VarTypes::List, context.current_line))
+                    AssignmentValue::Literal(lit) => {
+                        match lit {
+                            Literal::List(list) => {
+                                return Ok(list)
+                            }
+                            _ => ()
+                        }
+                    },
+                    _ => ()
                 }
+                Err(ChimeraRuntimeFailure::VarWrongType(self.list_name.clone(), VarTypes::List, context.current_line))
             },
-            None => return Err(ChimeraRuntimeFailure::VarNotFound(self.list_name.clone(), context.current_line))
+            None => Err(ChimeraRuntimeFailure::VarNotFound(self.list_name.clone(), context.current_line))
         }
     }
 
     pub fn list_mut_ref<'a>(&'a self, variable_map: &'a mut HashMap<String, AssignmentValue>, context: &Context) -> Result<&mut Vec<Literal>, ChimeraRuntimeFailure> {
-        match variable_map.get_mut(self.list_name.as_str()) {
+        return match variable_map.get_mut(self.list_name.as_str()) {
             Some(ret) => {
                 match ret {
-                    AssignmentValue::List(ret_list) => Ok(ret_list),
-                    _ => return Err(ChimeraRuntimeFailure::VarWrongType(self.list_name.clone(), VarTypes::List, context.current_line))
+                    AssignmentValue::Literal(lit) => {
+                        match lit {
+                            Literal::List(list) => {
+                                return Ok(list)
+                            }
+                            _ => ()
+                        }
+                    },
+                    _ => ()
                 }
+                Err(ChimeraRuntimeFailure::VarWrongType(self.list_name.clone(), VarTypes::List, context.current_line))
             },
-            None => return Err(ChimeraRuntimeFailure::VarNotFound(self.list_name.clone(), context.current_line))
+            None => Err(ChimeraRuntimeFailure::VarNotFound(self.list_name.clone(), context.current_line))
         }
     }
 }
@@ -599,88 +738,20 @@ pub enum HTTPVerb {
 #[derive(Clone, PartialEq, Debug)]
 pub enum AssignmentValue {
     Literal(Literal),
-    // TODO: Remove JsonValue and store the serde_json::Value by breaking it into the
-    //       Literal and List variants. Will need a new Object variant which holds a
-    //       HashMap<String, Self> to represent a serde_json::Value::Object
-    JsonValue(SerdeJsonValue),
-    HttpResponse(HttpResponse),
-    List(Vec<Literal>)
+    HttpResponse(HttpResponse)
 }
 
 impl std::fmt::Display for AssignmentValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             AssignmentValue::Literal(literal) => write!(f, "{}", literal),
-            AssignmentValue::HttpResponse(res) => write!(f, "var {}", res.var_name),
-            AssignmentValue::JsonValue(json_val) => {
-                let json_str = crate::util::serde_json_to_string(json_val);
-                write!(f, "{}", json_str)
-            },
-            AssignmentValue::List(list) => {
-                let list_as_str = list.into_iter().map(|c| c.to_string()).collect::<Vec<String>>().join(", ");
-                write!(f, "[{}]", list_as_str)
-            }
+            AssignmentValue::HttpResponse(res) => write!(f, "[HttpResponse status_code:{} body:{}]", res.status_code, res.body)
         }
     }
 }
 
 impl AssignmentValue {
-    pub fn resolve_value(value: &Value, variable_map: &HashMap<String, Self>, context: &Context) -> Result<Self, ChimeraRuntimeFailure> {
-        value.resolve(context, variable_map)
-    }
-
-    pub fn is_numeric(&self) -> bool {
-        match self {
-            Self::Literal(literal) => {
-                match literal {
-                    Literal::Int(_) => true,
-                    _ => false
-                }
-            },
-            Self::HttpResponse(_) => false,
-            Self::JsonValue(json_val) => {
-                match json_val {
-                    SerdeJsonValue::Number(_) => true,
-                    _ => false
-                }
-            },
-            Self::List(_) => false
-        }
-    }
-
-    pub fn to_int(&self) -> i64 {
-        // TODO: Fold is_numeric into this method and have it return a Result<i64, ChimeraruntimeError>
-        match self {
-            Self::Literal(literal) => {
-                match literal {
-                    Literal::Str(_str) => panic!("Tried to convert a Literal::String to an int"),
-                    Literal::Bool(bool) => {
-                        match bool {
-                            true => 1,
-                            false => 0
-                        }
-                    },
-                    Literal::Int(int) => *int as i64,
-                    Literal::Null => panic!("Tried to convert a null value to an int")
-                }
-            },
-            Self::HttpResponse(_) => panic!("Tried to convert a HttpResponse to an int"),
-            Self::JsonValue(json_val) => {
-                match json_val {
-                    SerdeJsonValue::Number(num) => {
-                        match num.as_i64() {
-                            Some(n) => n,
-                            None => panic!("Failed to convert a serde_json::Value Number to an i64")
-                        }
-                    },
-                    _ => panic!("Tried to convert a serde_json::Value to a num when it was not a Number")
-                }
-            },
-            Self::List(_) => panic!("Tried to convert a List to an int")
-        }
-    }
-
-    pub fn resolve_to_literal(&self) -> Option<&Literal> {
+    pub fn to_literal(&self) -> Option<&Literal> {
         match self {
             Self::Literal(literal) => Some(literal),
             _ => None
@@ -692,9 +763,7 @@ impl AssignmentValue {
 pub struct HttpResponse {
     // TODO: Store header data?
     pub status_code: u16,
-    pub body: SerdeJsonValue,
-    // TODO: Resolve error handling better, this adds code smell and this field shouldn't be here
-    pub var_name: String
+    pub body: Literal
 }
 
 /*
@@ -730,8 +799,8 @@ mod ast_tests {
             Statement::AssertCommand(assert_command) => {
                 assert_eq!(assert_command.negate_assertion, false, "negate_assertion should be false for an assertion which does not contain 'NOT'.");
                 assert_eq!(assert_command.subcommand, AssertSubCommand::EQUALS, "Assertion using EQUALS should have an AssertSubCommand::Equals subcommand.");
-                assert_eq!(assert_command.left_value, Value::Literal(Literal::Int(1)), "Assertion with a numerical literal should have a Literal::Int() value.");
-                assert_eq!(assert_command.right_value, Value::Literal(Literal::Int(1)));
+                assert_eq!(assert_command.left_value, Value::Literal(Literal::Number(1)), "Assertion with a numerical literal should have a Literal::Int() value.");
+                assert_eq!(assert_command.right_value, Value::Literal(Literal::Number(1)));
                 assert_eq!(assert_command.error_message.is_none(), true, "Assertion error_message should be None when no message is specified.");
             },
             _ => panic!("AST statement of a very simple assertion was not resolved as an AssertCommand variant.")
@@ -746,8 +815,8 @@ mod ast_tests {
             Statement::AssertCommand(assert_command) => {
                 assert_eq!(assert_command.negate_assertion, true, "negate_assertion should be true for an assertion which contains 'NOT'.");
                 assert_eq!(assert_command.subcommand, AssertSubCommand::EQUALS, "Assertion using EQUALS should have an AssertSubCommand::Equals subcommand.");
-                assert_eq!(assert_command.left_value, Value::Literal(Literal::Int(1)), "Assertion with a numerical literal should have a Value::Literal(Literal::Int()) value.");
-                assert_eq!(assert_command.right_value, Value::Literal(Literal::Int(2)));
+                assert_eq!(assert_command.left_value, Value::Literal(Literal::Number(1)), "Assertion with a numerical literal should have a Value::Literal(Literal::Int()) value.");
+                assert_eq!(assert_command.right_value, Value::Literal(Literal::Number(2)));
                 assert_eq!(assert_command.error_message.is_some(), true, "Assertion error_message should be Some() when message is specified.");
                 assert_eq!(assert_command.error_message.unwrap(), "\"foo\"".to_owned(), "Assertion error message was not equal to the supplied message");
             },
@@ -776,8 +845,8 @@ mod ast_tests {
         let trees: Vec<AssertCommand> = ["ASSERT EQUALS (foo) 1", "ASSERT EQUALS \"test\" 10", "ASSERT EQUALS true false"].into_iter().map(|x| str_to_ast(x).statement.into()).collect();
         assert_eq!(trees.len(), 3);
         assert_eq!(trees[0].left_value, Value::Variable("foo".to_owned()));
-        assert_eq!(trees[0].right_value, Value::Literal(Literal::Int(1)));
-        assert_eq!(trees[1].left_value, Value::Literal(Literal::Str("test".to_owned())));
+        assert_eq!(trees[0].right_value, Value::Literal(Literal::Number(1)));
+        assert_eq!(trees[1].left_value, Value::Literal(Literal::String("test".to_owned())));
         assert_eq!(trees[2].left_value, Value::Literal(Literal::Bool(true)));
         assert_eq!(trees[2].right_value, Value::Literal(Literal::Bool(false)));
     }
@@ -787,7 +856,7 @@ mod ast_tests {
     fn print_statement() {
         let ast = str_to_ast("PRINT 5");
         match ast.statement {
-            Statement::PrintCommand(val) => assert_eq!(val, Value::Literal(Literal::Int(5))),
+            Statement::PrintCommand(val) => assert_eq!(val, Value::Literal(Literal::Number(5))),
             _ => panic!("Statement for a PRINT did not resolve to the correct variant.")
         }
     }
@@ -800,7 +869,7 @@ mod ast_tests {
             Statement::AssignmentExpr(assignment_expr) => {
                 assert_eq!(assignment_expr.var_name, "foo".to_owned());
                 match assignment_expr.expression {
-                    Expression::LiteralExpression(literal_expression) => assert_eq!(literal_expression, Literal::Int(5)),
+                    Expression::LiteralExpression(literal_expression) => assert_eq!(literal_expression, Literal::Number(5)),
                     _ => panic!("Assignment expression assigning a LITERAL did not resolve with the correct expression field")
                 }
             },
@@ -829,10 +898,10 @@ mod ast_tests {
         assert_eq!(full_expression.path, "/foo/bar/baz?foo=5&another=\"bar\"".to_owned());
         assert_eq!(full_expression.http_assignments.len(), 2);
         assert_eq!(full_expression.http_assignments[0].lhs, "some_num".to_owned());
-        assert_eq!(full_expression.http_assignments[0].rhs, Value::Literal(Literal::Int(5)));
+        assert_eq!(full_expression.http_assignments[0].rhs, Value::Literal(Literal::Number(5)));
         assert_eq!(full_expression.key_val_pairs.len(), 2);
         assert_eq!(full_expression.key_val_pairs[0].key, "timeout".to_owned());
-        assert_eq!(full_expression.key_val_pairs[0].value, Value::Literal(Literal::Int(60)));
+        assert_eq!(full_expression.key_val_pairs[0].value, Value::Literal(Literal::Number(60)));
     }
 
     #[test]
@@ -842,9 +911,9 @@ mod ast_tests {
         match new_list_expression {
             ListExpression::New(list_values) => {
                 assert_eq!(list_values.len(), 4, "Expected list values to contain 4 values when 4 were provided to LIST NEW");
-                assert_eq!(list_values[0], Value::Literal(Literal::Int(1)), "When passing a 1 as the first list value, should have gotten a Value Literal Int");
+                assert_eq!(list_values[0], Value::Literal(Literal::Number(1)), "When passing a 1 as the first list value, should have gotten a Value Literal Int");
                 assert_eq!(list_values[1], Value::Literal(Literal::Bool(true)), "When passing a true as the second list value, should have gotten a Value Literal Bool");
-                assert_eq!(list_values[2], Value::Literal(Literal::Str("hello world".to_owned())), "When passing a \"hello world\" as the third list value, should have gotten a Value Literal Str");
+                assert_eq!(list_values[2], Value::Literal(Literal::String("hello world".to_owned())), "When passing a \"hello world\" as the third list value, should have gotten a Value Literal Str");
                 assert_eq!(list_values[3], Value::Variable("my_var".to_string()), "When passing a (my_var) as the fourth list value, should have gotten a Value Variable");
             }
             ListExpression::ListArgument(_) => panic!("Got a ListExpression::ListArgument variant when a ListExpression::New was expected")
@@ -858,7 +927,7 @@ mod ast_tests {
                     ListCommandOperations::MutateOperations(mutable_list_operations) => {
                         match mutable_list_operations {
                             MutateListOperations::Append(append_val) => {
-                                assert_eq!(append_val, Value::Literal(Literal::Int(5)), "Expected ListCommand's Append operation to contain a Literal Int 5 when the APPEND command was given a 5");
+                                assert_eq!(append_val, Value::Literal(Literal::Number(5)), "Expected ListCommand's Append operation to contain a Literal Int 5 when the APPEND command was given a 5");
                             },
                             _ => panic!("Expected ListCommand operation to be a MutableOperation Append when using an APPEND command but it wasn't")
                         }
@@ -876,7 +945,7 @@ mod ast_tests {
                     ListCommandOperations::MutateOperations(mutable_list_operations) => {
                         match mutable_list_operations {
                             MutateListOperations::Remove(remove_val) => {
-                                assert_eq!(remove_val, Value::Literal(Literal::Int(10)), "Expected ListCommand's Remove operation to contain a Literal Int 10 when the REMOVE command was given a 10");
+                                assert_eq!(remove_val, Value::Literal(Literal::Number(10)), "Expected ListCommand's Remove operation to contain a Literal Int 10 when the REMOVE command was given a 10");
                             },
                             _ => panic!("Expected ListCommand operation to be a MutableOperation Remove when using a REMOVE command but it wasn't")
                         }

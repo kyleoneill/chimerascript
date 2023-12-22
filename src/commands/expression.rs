@@ -3,15 +3,12 @@ use crate::abstract_syntax_tree::{AssignmentValue, Expression, HTTPVerb, HttpRes
 use crate::err_handle::ChimeraRuntimeFailure;
 use crate::frontend::Context;
 use crate::WEB_REQUEST_DOMAIN;
-use serde_json::Value;
 
-pub fn expression_command(context: &Context, expression: Expression, variable_map: &mut HashMap<String, AssignmentValue>, web_client: &reqwest::blocking::Client, variable_name: Option<String>) -> Result<AssignmentValue, ChimeraRuntimeFailure> {
+pub fn expression_command(context: &Context, expression: Expression, variable_map: &mut HashMap<String, AssignmentValue>, web_client: &reqwest::blocking::Client) -> Result<AssignmentValue, ChimeraRuntimeFailure> {
     match expression {
-        Expression::LiteralExpression(literal) => {
-            Ok(AssignmentValue::Literal(literal))
-        },
+        Expression::LiteralExpression(literal) => { Ok(AssignmentValue::Literal(literal)) },
         Expression::HttpCommand(http_command) => {
-            // Build our URL from the domain and our path
+            // Build URL from the domain and path
             let domain = WEB_REQUEST_DOMAIN.get().expect("Failed to get static global domain when resolving an HTTP expression");
             let mut resolved_path: String = domain.clone();
             resolved_path.push_str(http_command.path.as_str());
@@ -48,11 +45,8 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                 Ok(response) => {
                     // Have to store the status here as reading the body consumes the response
                     let status_code = response.status().as_u16();
-                    let body: Value = match response.json() {
-                        Ok(resolved_body) => resolved_body,
-                        Err(_) => Value::Null
-                    };
-                    let http_response = HttpResponse{ status_code, body, var_name: variable_name.expect("Resolved an expression to set a variable without passing the variable name") };
+                    let body: Literal = response.json().unwrap_or_else(|_| Literal::Null);
+                    let http_response = HttpResponse{ status_code, body };
                     Ok(AssignmentValue::HttpResponse(http_response))
                 },
                 Err(_) => Err(ChimeraRuntimeFailure::WebRequestFailure(http_command.path.clone(), context.current_line))
@@ -71,7 +65,7 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                         let literal_val = value.resolve_to_literal(context, variable_map)?;
                         literal_list.push(literal_val);
                     }
-                    Ok(AssignmentValue::List(literal_list))
+                    Ok(AssignmentValue::Literal(Literal::List(literal_list)))
                 },
                 ListExpression::ListArgument(list_command) => {
                     match list_command.operation {
@@ -85,7 +79,7 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                                 },
                                 MutateListOperations::Remove(remove_val) => {
                                     match remove_val.resolve_to_literal(context, variable_map)? {
-                                        Literal::Int(num) => {
+                                        Literal::Number(num) => {
                                             let index = num as usize;
                                             let list = list_command.list_mut_ref(variable_map, context)?;
                                             if index >= list.len() {
@@ -101,7 +95,7 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                         },
                         ListCommandOperations::Length => {
                             let list = list_command.list_ref(variable_map, context)?;
-                            Ok(AssignmentValue::Literal(Literal::Int(list.len() as i64)))
+                            Ok(AssignmentValue::Literal(Literal::Number(list.len() as i64)))
                         }
                     }
                 }

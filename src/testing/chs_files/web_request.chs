@@ -8,6 +8,12 @@
     - ASSERT EQUALS (res_with_query_param.body.extras.first) "1"
     - ASSERT EQUALS (res_with_query_param.body.resource.has_values) true
 
+    - case: response-contains
+      steps:
+        - ASSERT CONTAINS (res_with_query_param.body) "extras"
+        - ASSERT CONTAINS (res_with_query_param.body) "resource"
+        - ASSERT NOT CONTAINS (res_with_query_param.body) "foobarbaz"
+
 - case: put-request
   steps:
     - var res = PUT /test_resource name="new_name"

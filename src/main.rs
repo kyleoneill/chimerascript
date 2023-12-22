@@ -9,6 +9,7 @@ use err_handle::print_error;
 
 extern crate reqwest;
 extern crate yaml_rust;
+extern crate serde;
 extern crate serde_json;
 use std::fs;
 use std::path::Path;
