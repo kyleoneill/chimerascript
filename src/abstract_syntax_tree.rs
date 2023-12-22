@@ -410,7 +410,6 @@ impl Value {
                                     Ok(AssignmentValue::Literal(Literal::Number(http_response.status_code as i64)))
                                 },
                                 "body" => {
-                                    // have to re-format accessors here to slice out [1]?
                                     let mut without_body_accessor = vec![accessors[0]];
                                     if accessors.len() > 2 {
                                         without_body_accessor.append(&mut accessors[2..].to_vec());
@@ -515,7 +514,7 @@ impl std::fmt::Display for Literal {
             Literal::Object(object) => {
                 for (key, val) in object.iter() {
                     let val_string = val.to_string();
-                    write!(f, "{{\"{}}}\":\"{{{}}}\"", key, val_string)?;
+                    write!(f, "{{\"{}\"}}\":\"{{{}}}\"", key, val_string)?;
                 }
                 Ok(())
             },
@@ -565,6 +564,27 @@ impl Literal {
             Self::Number(i) => Some(*i),
             _ => None
         }
+    }
+    fn to_list(&self) -> Option<&Vec<Self>> {
+        match self {
+            Self::List(list) => Some(list),
+            _ => None
+        }
+    }
+    fn internal_to_string(&self) -> Option<&str> {
+        match self {
+            Self::String(string) => Some(string.as_str()),
+            _ => None
+        }
+    }
+    pub fn to_number_or_error(&self, came_from: &Value, context: &Context) -> Result<i64, ChimeraRuntimeFailure> {
+        Ok(self.to_number().ok_or_else(|| return ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::Int, context.current_line))?)
+    }
+    pub fn to_list_or_error(&self, came_from: &Value, context: &Context) -> Result<&Vec<Self>, ChimeraRuntimeFailure> {
+        Ok(self.to_list().ok_or_else(|| return ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::List, context.current_line))?)
+    }
+    pub fn to_string_or_error(&self, came_from: &Value, context: &Context) -> Result<&str, ChimeraRuntimeFailure> {
+        Ok(self.internal_to_string().ok_or_else(|| return ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::String, context.current_line))?)
     }
 }
 
@@ -725,21 +745,15 @@ impl std::fmt::Display for AssignmentValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             AssignmentValue::Literal(literal) => write!(f, "{}", literal),
-            AssignmentValue::HttpResponse(res) => write!(f, "var {}", res.var_name)
+            AssignmentValue::HttpResponse(res) => write!(f, "[HttpResponse status_code:{} body:{}]", res.status_code, res.body)
         }
     }
 }
 
 impl AssignmentValue {
-    pub fn resolve_to_literal(&self) -> Option<&Literal> {
+    pub fn to_literal(&self) -> Option<&Literal> {
         match self {
             Self::Literal(literal) => Some(literal),
-            _ => None
-        }
-    }
-    pub fn to_number(&self) -> Option<i64> {
-        match self {
-            Self::Literal(literal) => literal.to_number(),
             _ => None
         }
     }
@@ -749,9 +763,7 @@ impl AssignmentValue {
 pub struct HttpResponse {
     // TODO: Store header data?
     pub status_code: u16,
-    pub body: Literal,
-    // TODO: Resolve error handling better, this adds code smell and this field shouldn't be here
-    pub var_name: String
+    pub body: Literal
 }
 
 /*

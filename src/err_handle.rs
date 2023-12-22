@@ -47,7 +47,6 @@ pub enum ChimeraRuntimeFailure {
     InternalError(String),
     WebRequestFailure(String, i32),
     BadSubfieldAccess(Option<String>, String, i32),
-    JsonBadNumberRead(i32),
     TriedToIndexWithNonNumber(i32),
     OutOfBounds(i32)
 }
@@ -59,19 +58,18 @@ impl Display for ChimeraRuntimeFailure {
             //       like "array access" errors for TriedToIndexWithNonNumber and OutOfBounds or "variable errors" for
             //       VarNotFound, VarWrongType, and BadSubfieldAccess
             ChimeraRuntimeFailure::TestFailure(msg, line) => write!(f, "FAILURE on line {}: {}", line, msg),
-            ChimeraRuntimeFailure::VarNotFound(var_name, line) => write!(f, "ERROR on line {}: var {} was accessed but is not set", line, var_name),
-            ChimeraRuntimeFailure::VarWrongType(var_name, expected_type, line) => write!(f, "ERROR on line {}: {} was expected to be of type {} but it was not", line, var_name, expected_type),
+            ChimeraRuntimeFailure::VarNotFound(var_name, line) => write!(f, "ERROR on line {}: var '{}' was accessed but is not set", line, var_name),
+            ChimeraRuntimeFailure::VarWrongType(var_name, expected_type, line) => write!(f, "ERROR on line {}: '{}' was expected to be of type {} but it was not", line, var_name, expected_type),
             ChimeraRuntimeFailure::InternalError(action) => write!(f, "Internal error while {}", action),
             ChimeraRuntimeFailure::WebRequestFailure(endpoint, line) => write!(f, "ERROR on line {}: Failed to make request for endpoint '{}'", line, endpoint),
             ChimeraRuntimeFailure::BadSubfieldAccess(var_name, subfield, line) => {
                 // This is not ideal, should fix it later. Issue here is passing around the variable name through helper functions which do not need
                 // the original variable name JUST so we can error handle
                 match var_name {
-                    Some(v_name) => write!(f, "ERROR on line {}: Failed to access subfield {} for variable {}", line, subfield, v_name),
-                    None => write!(f, "ERROR on line {}: Failed to access subfield {}", line, subfield)
+                    Some(v_name) => write!(f, "ERROR on line {}: Failed to access subfield '{}' for variable '{}'", line, subfield, v_name),
+                    None => write!(f, "ERROR on line {}: Failed to access subfield '{}'", line, subfield)
                 }
-            },
-            ChimeraRuntimeFailure::JsonBadNumberRead(line) => write!(f, "ERROR on line {}: Tried to read a JSON number which cannot be represented by a supported number field", line),
+            }
             ChimeraRuntimeFailure::TriedToIndexWithNonNumber(line) => write!(f, "ERROR on line {}: Tried to index an array with a non-numerical value", line),
             ChimeraRuntimeFailure::OutOfBounds(line) => write!(f, "ERROR on line {}: Tried to access an array with an out-of-bounds value", line)
         }

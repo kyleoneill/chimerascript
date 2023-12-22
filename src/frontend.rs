@@ -305,7 +305,7 @@ impl TestLine {
             },
             Statement::Expression(expr) => {
                 // We are running an expression without assigning it, we can toss the result
-                match crate::commands::expression::expression_command(context, expr, variable_map, web_client, None) {
+                match crate::commands::expression::expression_command(context, expr, variable_map, web_client) {
                     Ok(_) => Ok(()),
                     Err(e) => Err(e)
                 }
