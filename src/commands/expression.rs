@@ -45,13 +45,12 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                 }
             };
             match res {
+                // TODO: Duplicate comment here and in util/mod.rs but should be deserializing body right into a
+                //       Literal. Look at how serde_json de-serializes the json blob into a serde_json::Value
                 Ok(response) => {
                     // Have to store the status here as reading the body consumes the response
                     let status_code = response.status().as_u16();
-                    let body: Value = match response.json() {
-                        Ok(resolved_body) => resolved_body,
-                        Err(_) => Value::Null
-                    };
+                    let body: Value = response.json().unwrap_or_else(|_| Value::Null);
                     let http_response = HttpResponse{ status_code, body, var_name: variable_name.expect("Resolved an expression to set a variable without passing the variable name") };
                     Ok(AssignmentValue::HttpResponse(http_response))
                 },
@@ -71,7 +70,7 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                         let literal_val = value.resolve_to_literal(context, variable_map)?;
                         literal_list.push(literal_val);
                     }
-                    Ok(AssignmentValue::List(literal_list))
+                    Ok(AssignmentValue::Literal(Literal::List(literal_list)))
                 },
                 ListExpression::ListArgument(list_command) => {
                     match list_command.operation {
@@ -85,7 +84,7 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                                 },
                                 MutateListOperations::Remove(remove_val) => {
                                     match remove_val.resolve_to_literal(context, variable_map)? {
-                                        Literal::Int(num) => {
+                                        Literal::Number(num) => {
                                             let index = num as usize;
                                             let list = list_command.list_mut_ref(variable_map, context)?;
                                             if index >= list.len() {
@@ -101,7 +100,7 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                         },
                         ListCommandOperations::Length => {
                             let list = list_command.list_ref(variable_map, context)?;
-                            Ok(AssignmentValue::Literal(Literal::Int(list.len() as i64)))
+                            Ok(AssignmentValue::Literal(Literal::Number(list.len() as i64)))
                         }
                     }
                 }

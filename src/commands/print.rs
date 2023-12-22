@@ -4,7 +4,7 @@ use crate::err_handle::ChimeraRuntimeFailure;
 use crate::frontend::{Context, TestCase};
 
 pub fn print_command(context: &Context, print_cmd: Value, variable_map: &HashMap<String, AssignmentValue>, depth: u32) -> Result <(), ChimeraRuntimeFailure> {
-    let resolved = AssignmentValue::resolve_value(&print_cmd, variable_map, context)?;
+    let resolved = print_cmd.resolve(context, variable_map)?;
     TestCase::print_in_test(&format!("{}", resolved), depth);
     Ok(())
 }

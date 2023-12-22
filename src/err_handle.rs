@@ -19,20 +19,22 @@ impl ChimeraCompileError {
 #[derive(Debug)]
 pub enum VarTypes {
     Int,
+    String,
     HttpResponse,
     List,
     Containable,
-    Primitive
+    Literal
 }
 
 impl Display for VarTypes {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             VarTypes::Int => write!(f, "Int"),
+            VarTypes::String => write!(f, "String"),
             VarTypes::HttpResponse => write!(f, "HttpResponse"),
             VarTypes::List => write!(f, "List"),
             VarTypes::Containable => write!(f, "List or Object"),
-            VarTypes::Primitive => write!(f, "int, bool, or string")
+            VarTypes::Literal => write!(f, "null, number, bool, string, array, or object")
         }
     }
 }
@@ -47,8 +49,7 @@ pub enum ChimeraRuntimeFailure {
     BadSubfieldAccess(Option<String>, String, i32),
     JsonBadNumberRead(i32),
     TriedToIndexWithNonNumber(i32),
-    OutOfBounds(i32),
-    UnsupportedOperation(String, i32)
+    OutOfBounds(i32)
 }
 
 impl Display for ChimeraRuntimeFailure {
@@ -72,8 +73,7 @@ impl Display for ChimeraRuntimeFailure {
             },
             ChimeraRuntimeFailure::JsonBadNumberRead(line) => write!(f, "ERROR on line {}: Tried to read a JSON number which cannot be represented by a supported number field", line),
             ChimeraRuntimeFailure::TriedToIndexWithNonNumber(line) => write!(f, "ERROR on line {}: Tried to index an array with a non-numerical value", line),
-            ChimeraRuntimeFailure::OutOfBounds(line) => write!(f, "ERROR on line {}: Tried to access an array with an out-of-bounds value", line),
-            ChimeraRuntimeFailure::UnsupportedOperation(operation, line) => write!(f, "ERROR on line {}: {} is not currently supported", line, operation)
+            ChimeraRuntimeFailure::OutOfBounds(line) => write!(f, "ERROR on line {}: Tried to access an array with an out-of-bounds value", line)
         }
     }
 }
