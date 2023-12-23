@@ -158,4 +158,25 @@ mod testing {
         assert_eq!(res.0, 8, "{} should have 8 passing tests which test lists but had {}", filename, res.0);
         assert_eq!(res.1, 4, "{} should have 4 failing tests which test bad list access but had {}", filename, res.1);
     }
+
+    #[test]
+    /// Test that different number kinds work in different scenarios. Each of the number kinds should be able to be
+    /// made from the LITERAL command, should work in lists, and should be comparable for equality and ordering
+    fn number_kinds() {
+        let client = initialize();
+        let filename = "numberkinds.chs";
+        let tests = read_cs_file(filename);
+        let res = TestCase::run_outermost_test_case(tests, client);
+        assert_eq!(res.0, 2, "{} should have 2 passing tess which test different types of numbers but had {}", filename, res.0)
+    }
+
+    #[test]
+    /// Test that comments can be included in test script
+    fn comments() {
+        let client = initialize();
+        let filename = "comments.chs";
+        let tests = read_cs_file(filename);
+        let res = TestCase::run_outermost_test_case(tests, client);
+        assert_eq!(res.0, 1, "{} should have 1 passing test which uses comments but had {}", filename, res.0)
+    }
 }

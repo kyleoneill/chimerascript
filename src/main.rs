@@ -2,7 +2,7 @@ mod err_handle;
 mod frontend;
 mod abstract_syntax_tree;
 mod commands;
-mod util;
+mod literal;
 mod testing;
 
 use err_handle::print_error;
@@ -35,7 +35,14 @@ struct Args {
 
 static WEB_REQUEST_DOMAIN: OnceLock<String> = OnceLock::new();
 
+fn system_checks() {
+    if !cfg!(target_pointer_width = "64") {
+        panic!("This application must be run on a 64 bit platform.");
+    }
+}
+
 fn main() {
+    system_checks();
     let args = Args::parse();
     let path = Path::new(&args.path);
     if !path.exists() {

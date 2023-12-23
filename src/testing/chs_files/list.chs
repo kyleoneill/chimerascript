@@ -19,6 +19,7 @@
     - case: list-append
       steps:
         - LIST APPEND (my_list) 10
+        - ASSERT EQUALS (my_list.5) 10
         - var new_list_len = LIST LENGTH (my_list)
         - ASSERT EQUALS (new_list_len) 6
     - case: list-remove

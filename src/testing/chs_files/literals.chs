@@ -2,6 +2,7 @@
   steps:
     - ASSERT EQUALS 1 1
     - ASSERT EQUALS true true
+    - ASSERT EQUALS true True
     - ASSERT EQUALS "test" "test"
     - ASSERT EQUALS "hello world" "hello world"
 
@@ -10,7 +11,7 @@
     - var num = LITERAL 5
     - var bigger_num = LITERAL 100
     - var empty = LITERAL null
-    - var another_empty = LITERAL null
+    - var another_empty = LITERAL Null
     - var boolean = LITERAL true
     - var some_str = LITERAL "hello world"
 

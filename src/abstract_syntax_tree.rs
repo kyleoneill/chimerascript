@@ -1,11 +1,10 @@
 use std::collections::HashMap;
 use std::fmt::Formatter;
 use pest::iterators::{Pair, Pairs};
-use serde::de::{Deserialize, Error, MapAccess, SeqAccess, Visitor};
-use serde::Deserializer;
 use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure, VarTypes};
 use crate::err_handle::ChimeraCompileError::FailedParseAST;
 use crate::frontend::{Rule, Context};
+use crate::literal::{Literal, NumberKind};
 
 #[derive(Debug)]
 pub struct ChimeraScriptAST {
@@ -143,47 +142,54 @@ impl ChimeraScriptAST {
         if pair.as_rule() != Rule::Value {return Err(FailedParseAST("expected a Rule::Value but got a different Rule variant".to_owned()))};
         let inner = pair.into_inner().peek().ok_or_else(|| return FailedParseAST("Rule::Value did not contain an inner".to_owned()))?;
         return match inner.as_rule() {
-            Rule::LiteralValue => {
-                let literal_value = ChimeraScriptAST::parse_rule_to_literal_value(inner)?;
-                Ok(Value::Literal(literal_value))
-            },
+            Rule::LiteralValue => Ok(Value::Literal(ChimeraScriptAST::parse_rule_to_literal_value(inner)?)),
             Rule::VariableValue => Ok(Value::Variable(ChimeraScriptAST::parse_rule_to_variable_name(inner)?)),
             _ => { Err(FailedParseAST("got an invalid Rule variant while parsing the inner of a Rule::Value".to_owned()))}
         }
     }
 
     fn parse_rule_to_literal_value(pair: Pair<Rule>) -> Result<Literal, ChimeraCompileError> {
-        // A literal can be an int, a bool, or a string. Check to see if it's an int
-        // or bool before setting it to be a string
         if pair.as_rule() != Rule::LiteralValue { return Err(FailedParseAST("Expected a Rule::LiteralValue but got a different Rule variant".to_owned())) }
-        // TODO: Better number handling than just setting every number to an i64
-        match pair.as_str().parse::<i64>() {
-            Ok(res) => return Ok(Literal::Number(res)),
-            Err(_) => ()
-        };
-        let res = match pair.as_str() {
-            "true" => Literal::Bool(true),
-            "false" => Literal::Bool(false),
-            "null" => Literal::Null,
-            _ => {
-                // TODO: Refactor this to be a bit more readable and match how the rest of the token
-                //       parsing is being handled. This is currently calling into_inner to grab a QuoteString,
-                //       into_inner again to grab an AggregatedString, and then getting the str value
-                //       of the AggregatedString
-                match pair.into_inner().peek() {
-                    Some(first_inner) => {
-                        match first_inner.into_inner().peek() {
-                            Some(second_inner) => {
-                                Literal::String(second_inner.as_str().to_owned())
-                            },
-                            None => return Err(FailedParseAST("Failed to get tokens for a Literal String value".to_owned()))
+        let literal_value = pair.into_inner().peek().ok_or_else(|| return FailedParseAST("Rule::LiteralValue did not contain an inner token when it should have".to_owned()))?;
+        match literal_value.as_rule() {
+            Rule::QuoteString => {
+                let string_without_quotes = literal_value.into_inner().peek().ok_or_else(|| return FailedParseAST("Rule::QuoteString did not contain an inner when it should have".to_owned()))?;
+                Ok(Literal::String(string_without_quotes.as_str().to_owned()))
+            },
+            Rule::Number => {
+                let number_kind = literal_value.into_inner().peek().ok_or_else(|| return FailedParseAST("Rule::Number did not contain an inner when it should have".to_owned()))?;
+                match number_kind.as_rule() {
+                    Rule::Float => {
+                        match number_kind.as_str().parse::<f64>() {
+                            Ok(as_float) => Ok(Literal::Number(NumberKind::F64(as_float))),
+                            Err(_) => return Err(FailedParseAST("Failed to parse a Rule::Float into an f64".to_owned()))
                         }
                     },
-                    None => return Err(FailedParseAST("Failed to get tokens for a Literal String value".to_owned()))
+                    Rule::SignedNumber => {
+                        match number_kind.as_str().parse::<i64>() {
+                            Ok(as_signed) => Ok(Literal::Number(NumberKind::I64(as_signed))),
+                            Err(_) => return Err(FailedParseAST("Failed to parse a Rule::SignedNumber into an i64".to_owned()))
+                        }
+                    },
+                    Rule::UnsignedNumber => {
+                        match number_kind.as_str().parse::<u64>() {
+                            Ok(as_unsigned) => Ok(Literal::Number(NumberKind::U64(as_unsigned))),
+                            Err(_) => return Err(FailedParseAST("Failed to parse a Rule::UnsignedNumber into a u64".to_owned()))
+                        }
+                    },
+                    _ => Err(FailedParseAST("Got an invalid rule when unwrapping a Rule::Number".to_owned()))
                 }
             },
-        };
-        Ok(res)
+            Rule::Boolean => {
+                match literal_value.as_str() {
+                    "true" | "True" => Ok(Literal::Bool(true)),
+                    "false" | "False" => Ok(Literal::Bool(false)),
+                    _ => return Err(FailedParseAST("Got an invalid value when parsing a Rule::Boolean".to_owned()))
+                }
+            },
+            Rule::Null => Ok(Literal::Null),
+            _ => Err(FailedParseAST("Got an invalid rule when unwrapping a Rule::LiteralValue".to_owned()))
+        }
     }
 
     fn parse_rule_to_expression(pair: Pair<Rule>) -> Result<Expression, ChimeraCompileError> {
@@ -200,10 +206,7 @@ impl ChimeraScriptAST {
 
         let first_token = expression_pairs.next().ok_or_else(|| return FailedParseAST("did not get any tokens inside a Rule::Expression".to_owned()))?;
         match first_token.as_rule() {
-            Rule::LiteralValue => {
-                let literal_value = ChimeraScriptAST::parse_rule_to_literal_value(first_token)?;
-                return Ok(Expression::LiteralExpression(literal_value))
-            },
+            Rule::LiteralValue => Ok(Expression::LiteralExpression(ChimeraScriptAST::parse_rule_to_literal_value(first_token)?)),
             Rule::HttpCommand => {
                 let mut http_pairs = first_token.into_inner();
 
@@ -371,7 +374,6 @@ impl std::fmt::Display for Value {
 }
 
 impl Value {
-    // This name is bad, come up with a better one
     pub fn error_print(&self) -> String {
         match self {
             Value::Literal(literal) => format!("value {}", literal.to_string()),
@@ -407,7 +409,7 @@ impl Value {
                                     if accessors.len() != 2 {
                                         return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(accessors[0].to_string()), accessors[2].to_string(), context.current_line))
                                     }
-                                    Ok(AssignmentValue::Literal(Literal::Number(http_response.status_code as i64)))
+                                    Ok(AssignmentValue::Literal(Literal::Number(NumberKind::U64(http_response.status_code))))
                                 },
                                 "body" => {
                                     let mut without_body_accessor = vec![accessors[0]];
@@ -490,163 +492,6 @@ pub struct HttpAssignment {
 pub struct KeyValuePair {
     key: String,
     value: Value
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum Literal {
-    String(String),
-    // TODO: Need better number support here for floats and u64s and maybe even bigints?
-    //       Also I think this to do is duplicated in more than one location, search for/resolve them all when done
-    Number(i64),
-    Bool(bool),
-    Null,
-    Object(HashMap<String, Self>),
-    List(Vec<Self>)
-}
-
-impl std::fmt::Display for Literal {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Literal::String(str) => write!(f, "{}", str),
-            Literal::Number(int) => write!(f, "{}", int),
-            Literal::Bool(bool) => write!(f, "{}", bool),
-            Literal::Null => write!(f, "<null>"),
-            Literal::Object(object) => {
-                for (key, val) in object.iter() {
-                    let val_string = val.to_string();
-                    write!(f, "{{\"{}\"}}\":\"{{{}}}\"", key, val_string)?;
-                }
-                Ok(())
-            },
-            Literal::List(list) => {
-                let list_as_str = list.into_iter().map(|c| c.to_string()).collect::<Vec<String>>().join(", ");
-                write!(f, "[{}]", list_as_str)
-            }
-        }
-    }
-}
-
-impl Literal {
-    fn resolve_access(&self, mut accessors: Vec<&str>, context: &Context) -> Result<&Self, ChimeraRuntimeFailure> {
-        accessors.reverse();
-        let var_name = match accessors.len() {
-            0 => return Err(ChimeraRuntimeFailure::InternalError("resolving the access of a Literal".to_string())),
-            _ => accessors.pop().unwrap().to_owned()
-        };
-        let mut pointer = self;
-        while accessors.len() != 0 {
-            let accessor = accessors.pop().unwrap();
-            match pointer {
-                Literal::Object(obj) => {
-                    pointer = match obj.get(accessor) {
-                        Some(val) => val,
-                        None => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(var_name), accessor.to_string(), context.current_line))
-                    }
-                },
-                Literal::List(arr) => {
-                    let index: usize = match accessor.parse() {
-                        Ok(i) => i,
-                        Err(_) => return Err(ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))
-                    };
-                    if index >= arr.len() { return Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line)) }
-                    pointer = &arr[index];
-                },
-                _ => break
-            }
-        }
-        if accessors.len() > 0 {
-            return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(var_name), accessors[accessors.len() - 2].to_string(), context.current_line))
-        }
-        Ok(pointer)
-    }
-    pub fn to_number(&self) -> Option<i64> {
-        match self {
-            Self::Number(i) => Some(*i),
-            _ => None
-        }
-    }
-    fn to_list(&self) -> Option<&Vec<Self>> {
-        match self {
-            Self::List(list) => Some(list),
-            _ => None
-        }
-    }
-    fn internal_to_string(&self) -> Option<&str> {
-        match self {
-            Self::String(string) => Some(string.as_str()),
-            _ => None
-        }
-    }
-    pub fn try_into_number(&self, came_from: &Value, context: &Context) -> Result<i64, ChimeraRuntimeFailure> {
-        Ok(self.to_number().ok_or_else(|| return ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::Int, context.current_line))?)
-    }
-    pub fn try_into_list(&self, came_from: &Value, context: &Context) -> Result<&Vec<Self>, ChimeraRuntimeFailure> {
-        Ok(self.to_list().ok_or_else(|| return ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::List, context.current_line))?)
-    }
-    pub fn try_into_string(&self, came_from: &Value, context: &Context) -> Result<&str, ChimeraRuntimeFailure> {
-        Ok(self.internal_to_string().ok_or_else(|| return ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::String, context.current_line))?)
-    }
-}
-
-impl <'de> Deserialize<'de> for Literal {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
-        struct LiteralVisitor;
-        impl<'de> Visitor<'de> for LiteralVisitor {
-            type Value = Literal;
-            fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
-                formatter.write_str("any valid JSON value")
-            }
-            fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E> where E: Error {
-                Ok(Literal::Bool(v))
-            }
-            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> where E: Error {
-                Ok(Literal::Number(v))
-            }
-            // TODO: impl real values for u64 and f64 here
-            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> where E: Error {
-                Ok(Literal::Number(v as i64))
-            }
-            fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E> where E: Error {
-                Ok(Literal::Number(v as i64))
-            }
-            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> where E: Error {
-                self.visit_string(String::from(v))
-            }
-            fn visit_string<E>(self, v: String) -> Result<Self::Value, E> where E: Error {
-                Ok(Literal::String(v))
-            }
-            fn visit_none<E>(self) -> Result<Self::Value, E> where E: Error {
-                Ok(Literal::Null)
-            }
-            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error> where D: Deserializer<'de> {
-                Deserialize::deserialize(deserializer)
-            }
-            fn visit_unit<E>(self) -> Result<Self::Value, E> where E: Error {
-                Ok(Literal::Null)
-            }
-            fn visit_seq<A>(self, mut visitor: A) -> Result<Self::Value, A::Error> where A: SeqAccess<'de> {
-                let mut vec = Vec::new();
-                while let Some(member) = visitor.next_element()? {
-                    vec.push(member)
-                }
-                Ok(Literal::List(vec))
-            }
-            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error> where A: MapAccess<'de> {
-                match map.next_key()? {
-                    Some(first_key) => {
-                        let mut values: HashMap<String, Literal> = HashMap::new();
-                        values.insert(first_key, map.next_value()?);
-                        while let Some((key, value)) = map.next_entry()? {
-                            values.insert(key, value);
-                        }
-                        Ok(Literal::Object(values))
-                    },
-                    None => Ok(Literal::Object(HashMap::new()))
-                }
-            }
-        }
-        deserializer.deserialize_any(LiteralVisitor)
-    }
 }
 
 #[derive(Debug)]
@@ -762,7 +607,7 @@ impl AssignmentValue {
 #[derive(Clone, PartialEq, Debug)]
 pub struct HttpResponse {
     // TODO: Store header data?
-    pub status_code: u16,
+    pub status_code: u64,
     pub body: Literal
 }
 
@@ -799,12 +644,24 @@ mod ast_tests {
             Statement::AssertCommand(assert_command) => {
                 assert_eq!(assert_command.negate_assertion, false, "negate_assertion should be false for an assertion which does not contain 'NOT'.");
                 assert_eq!(assert_command.subcommand, AssertSubCommand::EQUALS, "Assertion using EQUALS should have an AssertSubCommand::Equals subcommand.");
-                assert_eq!(assert_command.left_value, Value::Literal(Literal::Number(1)), "Assertion with a numerical literal should have a Literal::Int() value.");
-                assert_eq!(assert_command.right_value, Value::Literal(Literal::Number(1)));
+                assert_eq!(assert_command.left_value, Value::Literal(Literal::Number(NumberKind::U64(1))), "Assertion with a numerical literal should have a Literal::Int() value.");
+                assert_eq!(assert_command.right_value, Value::Literal(Literal::Number(NumberKind::U64(1))));
                 assert_eq!(assert_command.error_message.is_none(), true, "Assertion error_message should be None when no message is specified.");
             },
             _ => panic!("AST statement of a very simple assertion was not resolved as an AssertCommand variant.")
         }
+    }
+
+    #[test]
+    /// Test that comments work as expected. Comments should be ignored and not generate any rule pairs
+    fn comments() {
+        let assertion_with_comment: AssertCommand = str_to_ast("ASSERT EQUALS 1 1 //this assertion ends with a comment").statement.into();
+        assert_eq!(assertion_with_comment.subcommand, AssertSubCommand::EQUALS);
+
+        let assertion_with_midline_comment: AssertCommand = str_to_ast("ASSERT EQUALS 1 /*this is a midline comment*/ 1").statement.into();
+        assert_eq!(assertion_with_midline_comment.subcommand, AssertSubCommand::EQUALS);
+        assert_eq!(assertion_with_midline_comment.left_value, Value::Literal(Literal::Number(NumberKind::U64(1))));
+        assert_eq!(assertion_with_midline_comment.right_value, Value::Literal(Literal::Number(NumberKind::U64(1))));
     }
 
     #[test]
@@ -815,13 +672,33 @@ mod ast_tests {
             Statement::AssertCommand(assert_command) => {
                 assert_eq!(assert_command.negate_assertion, true, "negate_assertion should be true for an assertion which contains 'NOT'.");
                 assert_eq!(assert_command.subcommand, AssertSubCommand::EQUALS, "Assertion using EQUALS should have an AssertSubCommand::Equals subcommand.");
-                assert_eq!(assert_command.left_value, Value::Literal(Literal::Number(1)), "Assertion with a numerical literal should have a Value::Literal(Literal::Int()) value.");
-                assert_eq!(assert_command.right_value, Value::Literal(Literal::Number(2)));
+                assert_eq!(assert_command.left_value, Value::Literal(Literal::Number(NumberKind::U64(1))), "Assertion with a numerical literal should have a Value::Literal(Literal::Int()) value.");
+                assert_eq!(assert_command.right_value, Value::Literal(Literal::Number(NumberKind::U64(2))));
                 assert_eq!(assert_command.error_message.is_some(), true, "Assertion error_message should be Some() when message is specified.");
                 assert_eq!(assert_command.error_message.unwrap(), "\"foo\"".to_owned(), "Assertion error message was not equal to the supplied message");
             },
             _ => panic!("AST statement of a very simple assertion was not resolved as an AssertCommand variant.")
         }
+    }
+
+    #[test]
+    /// Test LITERAL values
+    fn literal_values() {
+        let trees: Vec<Literal> = ["LITERAL \"this is a string\"", "LITERAL \"foo\"", "LITERAL 5", "LITERAL 0", "LITERAL -10", "LITERAL 5.5", "LITERAL -10.7", "LITERAL true", "LITERAL True", "LITERAL false", "LITERAL False", "LITERAL null", "LITERAL Null"].into_iter().map(|x| str_to_ast(x).statement.into()).collect();
+        assert_eq!(trees.len(), 13);
+        assert_eq!(trees[0], Literal::String("this is a string".to_owned()));
+        assert_eq!(trees[1], Literal::String("foo".to_owned()));
+        assert_eq!(trees[2], Literal::Number(NumberKind::U64(5u64)));
+        assert_eq!(trees[3], Literal::Number(NumberKind::U64(0u64)));
+        assert_eq!(trees[4], Literal::Number(NumberKind::I64(-10i64)));
+        assert_eq!(trees[5], Literal::Number(NumberKind::F64(5.5f64)));
+        assert_eq!(trees[6], Literal::Number(NumberKind::F64(-10.7f64)));
+        assert_eq!(trees[7], Literal::Bool(true));
+        assert_eq!(trees[8], Literal::Bool(true));
+        assert_eq!(trees[9], Literal::Bool(false));
+        assert_eq!(trees[10], Literal::Bool(false));
+        assert_eq!(trees[11], Literal::Null);
+        assert_eq!(trees[12], Literal::Null);
     }
 
     #[test]
@@ -845,7 +722,7 @@ mod ast_tests {
         let trees: Vec<AssertCommand> = ["ASSERT EQUALS (foo) 1", "ASSERT EQUALS \"test\" 10", "ASSERT EQUALS true false"].into_iter().map(|x| str_to_ast(x).statement.into()).collect();
         assert_eq!(trees.len(), 3);
         assert_eq!(trees[0].left_value, Value::Variable("foo".to_owned()));
-        assert_eq!(trees[0].right_value, Value::Literal(Literal::Number(1)));
+        assert_eq!(trees[0].right_value, Value::Literal(Literal::Number(NumberKind::U64(1))));
         assert_eq!(trees[1].left_value, Value::Literal(Literal::String("test".to_owned())));
         assert_eq!(trees[2].left_value, Value::Literal(Literal::Bool(true)));
         assert_eq!(trees[2].right_value, Value::Literal(Literal::Bool(false)));
@@ -856,7 +733,7 @@ mod ast_tests {
     fn print_statement() {
         let ast = str_to_ast("PRINT 5");
         match ast.statement {
-            Statement::PrintCommand(val) => assert_eq!(val, Value::Literal(Literal::Number(5))),
+            Statement::PrintCommand(val) => assert_eq!(val, Value::Literal(Literal::Number(NumberKind::U64(5)))),
             _ => panic!("Statement for a PRINT did not resolve to the correct variant.")
         }
     }
@@ -869,7 +746,7 @@ mod ast_tests {
             Statement::AssignmentExpr(assignment_expr) => {
                 assert_eq!(assignment_expr.var_name, "foo".to_owned());
                 match assignment_expr.expression {
-                    Expression::LiteralExpression(literal_expression) => assert_eq!(literal_expression, Literal::Number(5)),
+                    Expression::LiteralExpression(literal_expression) => assert_eq!(literal_expression, Literal::Number(NumberKind::U64(5))),
                     _ => panic!("Assignment expression assigning a LITERAL did not resolve with the correct expression field")
                 }
             },
@@ -898,10 +775,10 @@ mod ast_tests {
         assert_eq!(full_expression.path, "/foo/bar/baz?foo=5&another=\"bar\"".to_owned());
         assert_eq!(full_expression.http_assignments.len(), 2);
         assert_eq!(full_expression.http_assignments[0].lhs, "some_num".to_owned());
-        assert_eq!(full_expression.http_assignments[0].rhs, Value::Literal(Literal::Number(5)));
+        assert_eq!(full_expression.http_assignments[0].rhs, Value::Literal(Literal::Number(NumberKind::U64(5))));
         assert_eq!(full_expression.key_val_pairs.len(), 2);
         assert_eq!(full_expression.key_val_pairs[0].key, "timeout".to_owned());
-        assert_eq!(full_expression.key_val_pairs[0].value, Value::Literal(Literal::Number(60)));
+        assert_eq!(full_expression.key_val_pairs[0].value, Value::Literal(Literal::Number(NumberKind::U64(60))));
     }
 
     #[test]
@@ -911,7 +788,7 @@ mod ast_tests {
         match new_list_expression {
             ListExpression::New(list_values) => {
                 assert_eq!(list_values.len(), 4, "Expected list values to contain 4 values when 4 were provided to LIST NEW");
-                assert_eq!(list_values[0], Value::Literal(Literal::Number(1)), "When passing a 1 as the first list value, should have gotten a Value Literal Int");
+                assert_eq!(list_values[0], Value::Literal(Literal::Number(NumberKind::U64(1))), "When passing a 1 as the first list value, should have gotten a Value Literal Int");
                 assert_eq!(list_values[1], Value::Literal(Literal::Bool(true)), "When passing a true as the second list value, should have gotten a Value Literal Bool");
                 assert_eq!(list_values[2], Value::Literal(Literal::String("hello world".to_owned())), "When passing a \"hello world\" as the third list value, should have gotten a Value Literal Str");
                 assert_eq!(list_values[3], Value::Variable("my_var".to_string()), "When passing a (my_var) as the fourth list value, should have gotten a Value Variable");
@@ -927,7 +804,7 @@ mod ast_tests {
                     ListCommandOperations::MutateOperations(mutable_list_operations) => {
                         match mutable_list_operations {
                             MutateListOperations::Append(append_val) => {
-                                assert_eq!(append_val, Value::Literal(Literal::Number(5)), "Expected ListCommand's Append operation to contain a Literal Int 5 when the APPEND command was given a 5");
+                                assert_eq!(append_val, Value::Literal(Literal::Number(NumberKind::U64(5))), "Expected ListCommand's Append operation to contain a Literal Int 5 when the APPEND command was given a 5");
                             },
                             _ => panic!("Expected ListCommand operation to be a MutableOperation Append when using an APPEND command but it wasn't")
                         }
@@ -945,7 +822,7 @@ mod ast_tests {
                     ListCommandOperations::MutateOperations(mutable_list_operations) => {
                         match mutable_list_operations {
                             MutateListOperations::Remove(remove_val) => {
-                                assert_eq!(remove_val, Value::Literal(Literal::Number(10)), "Expected ListCommand's Remove operation to contain a Literal Int 10 when the REMOVE command was given a 10");
+                                assert_eq!(remove_val, Value::Literal(Literal::Number(NumberKind::U64(10))), "Expected ListCommand's Remove operation to contain a Literal Int 10 when the REMOVE command was given a 10");
                             },
                             _ => panic!("Expected ListCommand operation to be a MutableOperation Remove when using a REMOVE command but it wasn't")
                         }

@@ -26,11 +26,18 @@
       - HttpWeb
 - Ability to send Http requests to full paths so requests can go to endpoints
   other than just the one specified in config
-- Support for comments
 - Support for running a test by name
   - Accessed with args.name in main.rs
 - Test tagging?
 - Script documentation
+- Finish implementing comments
+  - Comments do not work if they take up an entire line
+  - This is due to both the parsing spitting out 0 tokens and the
+    YAML handling not returning an expected Array object
+  - Might have to get rid of the YAML structure and make the entire file just
+    the script to make this work? That is going to be a huge refactor,
+    but doesn't need to affect most of the internals (everything including
+    and after the AST)
 
 ----
 
