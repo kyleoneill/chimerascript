@@ -72,7 +72,7 @@ impl Display for ChimeraRuntimeFailure {
                     None => write!(f, "ERROR on line {}: Failed to access subfield '{}'", line, subfield)
                 }
             }
-            ChimeraRuntimeFailure::TriedToIndexWithNonNumber(line) => write!(f, "ERROR on line {}: Tried to index an array with a non-integer value", line),
+            ChimeraRuntimeFailure::TriedToIndexWithNonNumber(line) => write!(f, "ERROR on line {}: Arrays can only be indexed with an unsigned integer", line),
             ChimeraRuntimeFailure::OutOfBounds(line) => write!(f, "ERROR on line {}: Tried to access an array with an out-of-bounds value", line)
         }
     }
