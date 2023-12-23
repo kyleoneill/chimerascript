@@ -187,9 +187,7 @@ impl ChimeraScriptAST {
                     _ => return Err(FailedParseAST("Got an invalid value when parsing a Rule::Boolean".to_owned()))
                 }
             },
-            Rule::Null => {
-                Ok(Literal::Null)
-            },
+            Rule::Null => Ok(Literal::Null),
             _ => Err(FailedParseAST("Got an invalid rule when unwrapping a Rule::LiteralValue".to_owned()))
         }
     }
@@ -652,6 +650,18 @@ mod ast_tests {
             },
             _ => panic!("AST statement of a very simple assertion was not resolved as an AssertCommand variant.")
         }
+    }
+
+    #[test]
+    /// Test that comments work as expected. Comments should be ignored and not generate any rule pairs
+    fn comments() {
+        let assertion_with_comment: AssertCommand = str_to_ast("ASSERT EQUALS 1 1 //this assertion ends with a comment").statement.into();
+        assert_eq!(assertion_with_comment.subcommand, AssertSubCommand::EQUALS);
+
+        let assertion_with_midline_comment: AssertCommand = str_to_ast("ASSERT EQUALS 1 /*this is a midline comment*/ 1").statement.into();
+        assert_eq!(assertion_with_midline_comment.subcommand, AssertSubCommand::EQUALS);
+        assert_eq!(assertion_with_midline_comment.left_value, Value::Literal(Literal::Number(NumberKind::U64(1))));
+        assert_eq!(assertion_with_midline_comment.right_value, Value::Literal(Literal::Number(NumberKind::U64(1))));
     }
 
     #[test]
