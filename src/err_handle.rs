@@ -18,7 +18,8 @@ impl ChimeraCompileError {
 
 #[derive(Debug)]
 pub enum VarTypes {
-    Int,
+    Number,
+    Unsigned,
     String,
     HttpResponse,
     List,
@@ -29,7 +30,8 @@ pub enum VarTypes {
 impl Display for VarTypes {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            VarTypes::Int => write!(f, "Int"),
+            VarTypes::Number => write!(f, "Number"),
+            VarTypes::Unsigned => write!(f, "Unsigned Integer"),
             VarTypes::String => write!(f, "String"),
             VarTypes::HttpResponse => write!(f, "HttpResponse"),
             VarTypes::List => write!(f, "List"),
@@ -70,7 +72,7 @@ impl Display for ChimeraRuntimeFailure {
                     None => write!(f, "ERROR on line {}: Failed to access subfield '{}'", line, subfield)
                 }
             }
-            ChimeraRuntimeFailure::TriedToIndexWithNonNumber(line) => write!(f, "ERROR on line {}: Tried to index an array with a non-numerical value", line),
+            ChimeraRuntimeFailure::TriedToIndexWithNonNumber(line) => write!(f, "ERROR on line {}: Tried to index an array with a non-integer value", line),
             ChimeraRuntimeFailure::OutOfBounds(line) => write!(f, "ERROR on line {}: Tried to access an array with an out-of-bounds value", line)
         }
     }

@@ -1,7 +1,14 @@
-// $ makes a match compound atomic match, it will not use implicit whitespace
+// https://pest.rs/book/grammars/syntax.html
+// @ marks a rule as an atomic. Prevent implicit whitespace and interior rules are silent
+// $ marks a rule as a compound atomic. Prevent implicit whitespace but inner tokens are produced as normal
+// If a rule is marked as atomic, all of its interior rules will also be atomic
+// _ marks a rule as silent, it will match but not produce rule tokens
 
 // Implicit whitespacing is not on by default, this enables it
 WHITESPACE = _{ " " }
+COMMENT = _{ ("//" ~ ANY*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
+
+Main = { SOI ~ Statement ~ EOI }
 
 Statement = { AssignmentExpr | AssertCommand | PrintCommand | Expression }
 
@@ -34,13 +41,19 @@ CommaSeparatedValues = { Value ~ "," }
 ListCommandExpr = { ListCommand ~ VariableValue ~ Value? }
 ListCommand = { "LENGTH" | "APPEND" | "REMOVE" }
 
-
-// GENERAL USE
-
+// LITERAL
+LiteralValue = { QuoteString | Number | Boolean | Null }
 // TODO: Will need to add variable support in here
 QuoteString = { "\"" ~ AggregatedString ~ "\"" }
+Number = { Float | SignedNumber | UnsignedNumber }
+Float = @{ "-"? ~ UnsignedNumber ~ "." ~ ASCII_DIGIT+ }
+SignedNumber = @{ "-" ~ ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* }
+UnsignedNumber = @{ "0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* }
+Boolean = { "true" | "True" | "false" | "False" }
+Null = { ^"null" }
 
-LiteralValue = { QuoteString | ASCII_DIGIT+ | "true" | "false" | "null" }
+
+// GENERAL USE
 
 VariableValue = ${ "(" ~ NestedVariable+ ~ ")" }
 

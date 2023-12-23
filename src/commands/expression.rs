@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use crate::abstract_syntax_tree::{AssignmentValue, Expression, HTTPVerb, HttpResponse, ListExpression, Literal, ListCommandOperations, MutateListOperations};
+use crate::literal::{Literal, NumberKind};
+use crate::abstract_syntax_tree::{AssignmentValue, Expression, HTTPVerb, HttpResponse, ListExpression, ListCommandOperations, MutateListOperations};
 use crate::err_handle::ChimeraRuntimeFailure;
 use crate::frontend::Context;
 use crate::WEB_REQUEST_DOMAIN;
@@ -44,7 +45,7 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
             match res {
                 Ok(response) => {
                     // Have to store the status here as reading the body consumes the response
-                    let status_code = response.status().as_u16();
+                    let status_code: u64 = response.status().as_u16().try_into().expect("Failed to convert a u16 to a usize");
                     let body: Literal = response.json().unwrap_or_else(|_| Literal::Null);
                     let http_response = HttpResponse{ status_code, body };
                     Ok(AssignmentValue::HttpResponse(http_response))
@@ -80,7 +81,7 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                                 MutateListOperations::Remove(remove_val) => {
                                     match remove_val.resolve_to_literal(context, variable_map)? {
                                         Literal::Number(num) => {
-                                            let index = num as usize;
+                                            let index = num.to_usize().ok_or_else(|| return ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))?;
                                             let list = list_command.list_mut_ref(variable_map, context)?;
                                             if index >= list.len() {
                                                 return Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line))
@@ -95,7 +96,7 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                         },
                         ListCommandOperations::Length => {
                             let list = list_command.list_ref(variable_map, context)?;
-                            Ok(AssignmentValue::Literal(Literal::Number(list.len() as i64)))
+                            Ok(AssignmentValue::Literal(Literal::Number(NumberKind::U64(list.len().try_into().expect("Failed to convert usize to u64")))))
                         }
                     }
                 }
