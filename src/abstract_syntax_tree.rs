@@ -286,11 +286,9 @@ impl ChimeraScriptAST {
                                     list_values.push(value);
                                     list_value_token = list_new_pairs.next().ok_or_else(|| return FailedParseAST("Ran out of tokens when parsing CommaSeparatedValues. This token stream should always end with a Literal".to_owned()))?;
                                 }
-                                // After CommaSeparatedValues, there will be zero or one Value
-                                if list_value_token.as_rule() == Rule::Value {
-                                    let value = ChimeraScriptAST::parse_rule_to_value(list_value_token)?;
-                                    list_values.push(value);
-                                }
+                                // After all CommaSeparatedValues are read the final pair is going to be a Value
+                                let value = ChimeraScriptAST::parse_rule_to_value(list_value_token)?;
+                                list_values.push(value);
                             },
                             None => ()
                         };
@@ -877,5 +875,9 @@ mod ast_tests {
                 }
             }
         }
+        let failure_res = std::panic::catch_unwind(|| {
+            str_to_ast("LIST NEW [1,]");
+        });
+        assert!(failure_res.is_err(), "Expected list creation to fail when the only value passed in was comma separated");
     }
 }
