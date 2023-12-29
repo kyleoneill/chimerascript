@@ -39,7 +39,7 @@ ListExpression = { ListNew | ListCommandExpr }
 ListNew = { "NEW" ~ "[" ~ CommaSeparatedValues* ~ Value? ~ "]" }
 CommaSeparatedValues = { Value ~ "," }
 ListCommandExpr = { ListCommand ~ VariableValue ~ Value? }
-ListCommand = { "LENGTH" | "APPEND" | "REMOVE" }
+ListCommand = { "LENGTH" | "APPEND" | "REMOVE" | "POP" }
 
 // LITERAL
 LiteralValue = { QuoteString | Number | Boolean | Null }

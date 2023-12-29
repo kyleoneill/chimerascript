@@ -302,23 +302,24 @@ impl ChimeraScriptAST {
                         let command_token = list_command_expr_tokens.next().ok_or_else(|| return FailedParseAST("Ran out of tokens when parsing ListCommandExpr to get a ListCommand".to_owned()))?;
                         let variable_name_token = list_command_expr_tokens.next().ok_or_else(|| return FailedParseAST("Ran out of tokens when parsing ListCommandExpr to get a VariableValue".to_owned()))?;
                         let list_name = ChimeraScriptAST::parse_rule_to_variable_name(variable_name_token)?;
-                        let list_command = match list_command_expr_tokens.next() {
+                        let operation = match list_command_expr_tokens.next() {
                             Some(value_token) => {
                                 let value = ChimeraScriptAST::parse_rule_to_value(value_token)?;
                                 match command_token.as_str() {
-                                    "APPEND" => ListCommand { list_name, operation: ListCommandOperations::MutateOperations(MutateListOperations::Append(value)) },
-                                    "REMOVE" => ListCommand { list_name, operation: ListCommandOperations::MutateOperations(MutateListOperations::Remove(value)) },
+                                    "APPEND" => ListCommandOperations::MutateOperations(MutateListOperations::Append(value)),
+                                    "REMOVE" => ListCommandOperations::MutateOperations(MutateListOperations::Remove(value)),
                                     _ => return Err(FailedParseAST("Got an invalid list command while parsing a ListCommandExpr with an additional argument".to_owned()))
                                 }
                             },
                             None => {
                                 match command_token.as_str() {
-                                    "LENGTH" => ListCommand { list_name, operation: ListCommandOperations::Length },
+                                    "LENGTH" => ListCommandOperations::Length,
+                                    "POP" => ListCommandOperations::MutateOperations(MutateListOperations::Pop),
                                     _ => return Err(FailedParseAST("Got an invalid list command while parsing a ListCommandExpr".to_owned()))
                                 }
                             }
                         };
-                        Ok(Expression::ListExpression(ListExpression::ListArgument(list_command)))
+                        Ok(Expression::ListExpression(ListExpression::ListArgument(ListCommand { list_name, operation })))
                     },
                     _ => { return Err(FailedParseAST("ListExpression contained an invalid inner rule".to_owned())) }
                 }
@@ -566,7 +567,8 @@ pub enum ListCommandOperations {
 #[derive(Debug)]
 pub enum MutateListOperations {
     Append(Value),
-    Remove(Value)
+    Remove(Value),
+    Pop
 }
 
 impl From<Statement> for ListExpression {
@@ -856,6 +858,22 @@ mod ast_tests {
                 match list_command.operation {
                     ListCommandOperations::Length => (),
                     _ => panic!("Expected ListCommand's operation field to be of the Length variant when using a LENGTH command but it wasn't")
+                }
+            }
+        }
+        let list_pop_expression: ListExpression = str_to_ast("LIST POP (some_list)").statement.into();
+        match list_pop_expression {
+            ListExpression::New(_) => panic!("Got a ListExpression::New variant when a ListExpression::ListArgument was expected"),
+            ListExpression::ListArgument(list_command) => {
+                assert_eq!(list_command.list_name.as_str(), "some_list", "Expected ListCommand to have a list_name of some_list when the command used that as the list variable name");
+                match list_command.operation {
+                    ListCommandOperations::MutateOperations(mutable_operation) => {
+                        match mutable_operation {
+                            MutateListOperations::Pop => (),
+                            _ => panic!("Expected MutableOperations to be of the Pop variant when using a POP command but it wasn't")
+                        }
+                    },
+                    _ => panic!("Expected ListCommand's operation field to be of the MutateOperations variant when using a POP command but it wasn't")
                 }
             }
         }

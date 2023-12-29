@@ -44,6 +44,16 @@
         - ASSERT CONTAINS (my_list) "hello world"
         - var two = LITERAL 2
         - ASSERT CONTAINS (my_list) (two)
+    - case: list-pop
+      steps:
+        - LIST APPEND (my_list) 10
+        - LIST APPEND (my_list) 20
+        - var first_len = LIST LENGTH (my_list)
+        - LIST POP (my_list)
+        - var popped_val = LIST POP (my_list)
+        - ASSERT EQUALS (popped_val) 10
+        - var new_len = LIST LENGTH (my_list)
+        - ASSERT NOT EQUALS (first_len) (new_len)
 - case: list-bad-remove-index
   steps:
     - var my_list = LIST NEW [6]
@@ -59,3 +69,7 @@
   steps:
     - var foo = LITERAL 5
     - ASSERT CONTAINS (foo) 10
+- case: list-pop-fail
+  steps:
+    - var empty_list = LIST NEW []
+    - LIST POP (empty_list)

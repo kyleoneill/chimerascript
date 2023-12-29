@@ -54,8 +54,6 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
             }
         },
         Expression::ListExpression(list_expression) => {
-            // TODO: Add a LIST POP
-            // TODO: Add a LIST EMPTY to empty a list in one op rather than removing repeatedly?
             match list_expression {
                 ListExpression::New(new_list) => {
                     let mut literal_list: Vec<Literal> = Vec::new();
@@ -68,6 +66,9 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                 ListExpression::ListArgument(list_command) => {
                     match list_command.operation {
                         ListCommandOperations::MutateOperations(ref mutable_operation) => {
+                            // can't get the list here because it causes an immutable borrow of variable_map
+                            // variable map is also only used to get a lhs in some arms, so we can't get that with the
+                            // list here either
                             match mutable_operation {
                                 MutateListOperations::Append(append_val) => {
                                     let literal = append_val.resolve_to_literal(context, variable_map)?;
@@ -87,6 +88,15 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                                             Ok(AssignmentValue::Literal(removed_val))
                                         },
                                         _ => return Err(ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))
+                                    }
+                                },
+                                MutateListOperations::Pop => {
+                                    let list = list_command.list_mut_ref(variable_map, context)?;
+                                    match list.pop() {
+                                        Some(popped_val) => Ok(AssignmentValue::Literal(popped_val)),
+                                        // Should this be a more precise error? OutOfBounds is technically correct
+                                        // but not precise, is it worth making a new error for this specific case?
+                                        None => Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line))
                                     }
                                 }
                             }
