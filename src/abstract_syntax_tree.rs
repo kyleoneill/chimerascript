@@ -274,17 +274,26 @@ impl ChimeraScriptAST {
                 match list_expression_kind_token.as_rule() {
                     Rule::ListNew => {
                         let mut list_new_pairs = list_expression_kind_token.into_inner();
-                        let mut list_value_token = list_new_pairs.next().ok_or_else(|| return FailedParseAST("Did not get any tokens inside a ListNew".to_owned()))?;
                         let mut list_values: Vec<Value> = Vec::new();
-                        while list_value_token.as_rule() == Rule::CommaSeparatedValues {
-                            let mut inner = list_value_token.into_inner();
-                            let literal_token = inner.next().ok_or_else(|| return FailedParseAST("Did not get an inner token when parsing a CommaSeparatedValues, which should always contain a Literal".to_owned()))?;
-                            let value = ChimeraScriptAST::parse_rule_to_value(literal_token)?;
-                            list_values.push(value);
-                            list_value_token = list_new_pairs.next().ok_or_else(|| return FailedParseAST("Ran out of tokens when parsing CommaSeparatedValues. This token stream should always end with a Literal".to_owned()))?;
-                        }
-                        let value = ChimeraScriptAST::parse_rule_to_value(list_value_token)?;
-                        list_values.push(value);
+                        // Don't ok_or_else here as we might be making an empty list and there may be no more pairs
+                        match list_new_pairs.next() {
+                            Some(mut list_value_token) => {
+                                // A ListNew contains zero or more CommaSeparatedValues, read them all
+                                while list_value_token.as_rule() == Rule::CommaSeparatedValues {
+                                    let mut inner = list_value_token.into_inner();
+                                    let literal_token = inner.next().ok_or_else(|| return FailedParseAST("Did not get an inner token when parsing a CommaSeparatedValues, which should always contain a Literal".to_owned()))?;
+                                    let value = ChimeraScriptAST::parse_rule_to_value(literal_token)?;
+                                    list_values.push(value);
+                                    list_value_token = list_new_pairs.next().ok_or_else(|| return FailedParseAST("Ran out of tokens when parsing CommaSeparatedValues. This token stream should always end with a Literal".to_owned()))?;
+                                }
+                                // After CommaSeparatedValues, there will be zero or one Value
+                                if list_value_token.as_rule() == Rule::Value {
+                                    let value = ChimeraScriptAST::parse_rule_to_value(list_value_token)?;
+                                    list_values.push(value);
+                                }
+                            },
+                            None => ()
+                        };
                         Ok(Expression::ListExpression(ListExpression::New(list_values)))
                     },
                     Rule::ListCommandExpr => {
@@ -784,6 +793,14 @@ mod ast_tests {
     #[test]
     /// Test the LIST command
     fn list_expression() {
+        let new_empty_list: ListExpression = str_to_ast("LIST NEW []").statement.into();
+        match new_empty_list {
+            ListExpression::New(list_values) => {
+                assert_eq!(list_values.len(), 0, "Expected a list created with zero elements in it to have a length of 0 but it was not")
+            },
+            _ => panic!("Expected a ListExpression::New when making a new list but did not get one")
+        }
+
         let new_list_expression: ListExpression = str_to_ast("LIST NEW [1, true, \"hello world\", (my_var)]").statement.into();
         match new_list_expression {
             ListExpression::New(list_values) => {

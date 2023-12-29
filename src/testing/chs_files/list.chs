@@ -3,6 +3,11 @@
     - var my_var = LITERAL 5
     - var other_var = LITERAL 10
     - var my_list = LIST NEW [1, 2, "hello world", (my_var), (other_var)]
+    - case: list-new-empty
+      steps:
+        - var empty_list = LIST NEW []
+        - var empty_list_len = LIST LENGTH (empty_list)
+        - ASSERT EQUALS (empty_list_len) 0
     - case: print-list
       steps:
         - PRINT (my_list)
