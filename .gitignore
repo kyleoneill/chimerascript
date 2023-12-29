@@ -3,3 +3,4 @@
 *.pyc
 Cargo.lock
 state.txt
+scratch.chs

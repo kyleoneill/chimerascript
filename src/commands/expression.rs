@@ -45,7 +45,7 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
             match res {
                 Ok(response) => {
                     // Have to store the status here as reading the body consumes the response
-                    let status_code: u64 = response.status().as_u16().try_into().expect("Failed to convert a u16 to a usize");
+                    let status_code: u64 = response.status().as_u16().try_into().expect("Failed to convert a u16 to a u64");
                     let body: Literal = response.json().unwrap_or_else(|_| Literal::Null);
                     let http_response = HttpResponse{ status_code, body };
                     Ok(AssignmentValue::HttpResponse(http_response))
@@ -54,11 +54,6 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
             }
         },
         Expression::ListExpression(list_expression) => {
-            // TODO: Add a LIST POP
-            // TODO: Add the ability to make an empty list, it currently _must_ be initialized with one value.
-            //       In grammar.pest will need to edit ListNew to look like { ... ~ Value? } to allow the last value to be present
-            //       0 or 1 times and then will need to update the AST to handle the now optional token correctly
-            // TODO: Add a LIST EMPTY to empty a list in one op rather than removing repeatedly?
             match list_expression {
                 ListExpression::New(new_list) => {
                     let mut literal_list: Vec<Literal> = Vec::new();
@@ -71,6 +66,9 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                 ListExpression::ListArgument(list_command) => {
                     match list_command.operation {
                         ListCommandOperations::MutateOperations(ref mutable_operation) => {
+                            // can't get the list here because it causes an immutable borrow of variable_map
+                            // variable map is also only used to get a lhs in some arms, so we can't get that with the
+                            // list here either
                             match mutable_operation {
                                 MutateListOperations::Append(append_val) => {
                                     let literal = append_val.resolve_to_literal(context, variable_map)?;
@@ -90,6 +88,15 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                                             Ok(AssignmentValue::Literal(removed_val))
                                         },
                                         _ => return Err(ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))
+                                    }
+                                },
+                                MutateListOperations::Pop => {
+                                    let list = list_command.list_mut_ref(variable_map, context)?;
+                                    match list.pop() {
+                                        Some(popped_val) => Ok(AssignmentValue::Literal(popped_val)),
+                                        // Should this be a more precise error? OutOfBounds is technically correct
+                                        // but not precise, is it worth making a new error for this specific case?
+                                        None => Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line))
                                     }
                                 }
                             }

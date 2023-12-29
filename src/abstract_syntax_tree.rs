@@ -274,17 +274,24 @@ impl ChimeraScriptAST {
                 match list_expression_kind_token.as_rule() {
                     Rule::ListNew => {
                         let mut list_new_pairs = list_expression_kind_token.into_inner();
-                        let mut list_value_token = list_new_pairs.next().ok_or_else(|| return FailedParseAST("Did not get any tokens inside a ListNew".to_owned()))?;
                         let mut list_values: Vec<Value> = Vec::new();
-                        while list_value_token.as_rule() == Rule::CommaSeparatedValues {
-                            let mut inner = list_value_token.into_inner();
-                            let literal_token = inner.next().ok_or_else(|| return FailedParseAST("Did not get an inner token when parsing a CommaSeparatedValues, which should always contain a Literal".to_owned()))?;
-                            let value = ChimeraScriptAST::parse_rule_to_value(literal_token)?;
-                            list_values.push(value);
-                            list_value_token = list_new_pairs.next().ok_or_else(|| return FailedParseAST("Ran out of tokens when parsing CommaSeparatedValues. This token stream should always end with a Literal".to_owned()))?;
-                        }
-                        let value = ChimeraScriptAST::parse_rule_to_value(list_value_token)?;
-                        list_values.push(value);
+                        // Don't ok_or_else here as we might be making an empty list and there may be no more pairs
+                        match list_new_pairs.next() {
+                            Some(mut list_value_token) => {
+                                // A ListNew contains zero or more CommaSeparatedValues, read them all
+                                while list_value_token.as_rule() == Rule::CommaSeparatedValues {
+                                    let mut inner = list_value_token.into_inner();
+                                    let literal_token = inner.next().ok_or_else(|| return FailedParseAST("Did not get an inner token when parsing a CommaSeparatedValues, which should always contain a Literal".to_owned()))?;
+                                    let value = ChimeraScriptAST::parse_rule_to_value(literal_token)?;
+                                    list_values.push(value);
+                                    list_value_token = list_new_pairs.next().ok_or_else(|| return FailedParseAST("Ran out of tokens when parsing CommaSeparatedValues. This token stream should always end with a Literal".to_owned()))?;
+                                }
+                                // After all CommaSeparatedValues are read the final pair is going to be a Value
+                                let value = ChimeraScriptAST::parse_rule_to_value(list_value_token)?;
+                                list_values.push(value);
+                            },
+                            None => ()
+                        };
                         Ok(Expression::ListExpression(ListExpression::New(list_values)))
                     },
                     Rule::ListCommandExpr => {
@@ -293,23 +300,24 @@ impl ChimeraScriptAST {
                         let command_token = list_command_expr_tokens.next().ok_or_else(|| return FailedParseAST("Ran out of tokens when parsing ListCommandExpr to get a ListCommand".to_owned()))?;
                         let variable_name_token = list_command_expr_tokens.next().ok_or_else(|| return FailedParseAST("Ran out of tokens when parsing ListCommandExpr to get a VariableValue".to_owned()))?;
                         let list_name = ChimeraScriptAST::parse_rule_to_variable_name(variable_name_token)?;
-                        let list_command = match list_command_expr_tokens.next() {
+                        let operation = match list_command_expr_tokens.next() {
                             Some(value_token) => {
                                 let value = ChimeraScriptAST::parse_rule_to_value(value_token)?;
                                 match command_token.as_str() {
-                                    "APPEND" => ListCommand { list_name, operation: ListCommandOperations::MutateOperations(MutateListOperations::Append(value)) },
-                                    "REMOVE" => ListCommand { list_name, operation: ListCommandOperations::MutateOperations(MutateListOperations::Remove(value)) },
+                                    "APPEND" => ListCommandOperations::MutateOperations(MutateListOperations::Append(value)),
+                                    "REMOVE" => ListCommandOperations::MutateOperations(MutateListOperations::Remove(value)),
                                     _ => return Err(FailedParseAST("Got an invalid list command while parsing a ListCommandExpr with an additional argument".to_owned()))
                                 }
                             },
                             None => {
                                 match command_token.as_str() {
-                                    "LENGTH" => ListCommand { list_name, operation: ListCommandOperations::Length },
+                                    "LENGTH" => ListCommandOperations::Length,
+                                    "POP" => ListCommandOperations::MutateOperations(MutateListOperations::Pop),
                                     _ => return Err(FailedParseAST("Got an invalid list command while parsing a ListCommandExpr".to_owned()))
                                 }
                             }
                         };
-                        Ok(Expression::ListExpression(ListExpression::ListArgument(list_command)))
+                        Ok(Expression::ListExpression(ListExpression::ListArgument(ListCommand { list_name, operation })))
                     },
                     _ => { return Err(FailedParseAST("ListExpression contained an invalid inner rule".to_owned())) }
                 }
@@ -557,7 +565,8 @@ pub enum ListCommandOperations {
 #[derive(Debug)]
 pub enum MutateListOperations {
     Append(Value),
-    Remove(Value)
+    Remove(Value),
+    Pop
 }
 
 impl From<Statement> for ListExpression {
@@ -784,6 +793,14 @@ mod ast_tests {
     #[test]
     /// Test the LIST command
     fn list_expression() {
+        let new_empty_list: ListExpression = str_to_ast("LIST NEW []").statement.into();
+        match new_empty_list {
+            ListExpression::New(list_values) => {
+                assert_eq!(list_values.len(), 0, "Expected a list created with zero elements in it to have a length of 0 but it was not")
+            },
+            _ => panic!("Expected a ListExpression::New when making a new list but did not get one")
+        }
+
         let new_list_expression: ListExpression = str_to_ast("LIST NEW [1, true, \"hello world\", (my_var)]").statement.into();
         match new_list_expression {
             ListExpression::New(list_values) => {
@@ -842,5 +859,25 @@ mod ast_tests {
                 }
             }
         }
+        let list_pop_expression: ListExpression = str_to_ast("LIST POP (some_list)").statement.into();
+        match list_pop_expression {
+            ListExpression::New(_) => panic!("Got a ListExpression::New variant when a ListExpression::ListArgument was expected"),
+            ListExpression::ListArgument(list_command) => {
+                assert_eq!(list_command.list_name.as_str(), "some_list", "Expected ListCommand to have a list_name of some_list when the command used that as the list variable name");
+                match list_command.operation {
+                    ListCommandOperations::MutateOperations(mutable_operation) => {
+                        match mutable_operation {
+                            MutateListOperations::Pop => (),
+                            _ => panic!("Expected MutableOperations to be of the Pop variant when using a POP command but it wasn't")
+                        }
+                    },
+                    _ => panic!("Expected ListCommand's operation field to be of the MutateOperations variant when using a POP command but it wasn't")
+                }
+            }
+        }
+        let failure_res = std::panic::catch_unwind(|| {
+            str_to_ast("LIST NEW [1,]");
+        });
+        assert!(failure_res.is_err(), "Expected list creation to fail when the only value passed in was comma separated");
     }
 }
