@@ -28,7 +28,8 @@ PrintCommand = { "PRINT" ~ Value }
 HttpCommand = { HTTPVerb ~ Path ~ HttpAssignment* ~ KeyValuePair* }
 HTTPVerb = { "GET" | "PUT" | "POST" | "DELETE" }
 // e.g. /foo/bar?thing=5&other=50&another=10
-Path = ${ ("/" ~ Str+)+ ~ BeginPathArgs? }
+Path = ${ PathEndpoint+ ~ BeginPathArgs? }
+PathEndpoint = { "/" ~ VariableOrStr+ }
 BeginPathArgs = ${ "?" ~ HttpAssignment ~ AdditionalPathArgs* }
 AdditionalPathArgs = ${ "&" ~ HttpAssignment }
 KeyValuePair = ${ VariableNameAssignment ~ "=>" ~ Value } // repeatable optional key/val like timeout=>60
@@ -63,8 +64,16 @@ VariableNameAssignment = { Str+ }
 
 AggregatedString = { StrWithWhitespace+ }
 WhiteSpace = @{ " " }
+// TODO: Need to support a lot more chars here. String must be able to contain special chars like
+//       !?@#$%^&*()[].,"'<>/  and will probably need escape support. Ex, the string
+//       "foo bar bash \(asdf\)" has escaped the () so we do not try to parse `asdf` as a variable
+// IMPORTANT: When adding this, those additional chars should not be allowed for some uses (like variable names).
+//  rather than replacing Str, add a new rule to StrWithWhitespace and maybe change its name to reflect that it should
+//  be used to represent a user String
 StrWithWhitespace = _{ Str | WhiteSpace }
 
+VariableOrStr = { VariableValue | StrPlus }
+StrPlus = { Str+ }
 Str = _{ ASCII_ALPHANUMERIC | "-" | "_" }
 
 NestedVariable = _{ Str | "." }

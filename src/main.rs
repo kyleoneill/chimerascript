@@ -85,6 +85,7 @@ fn main() {
             println!("RUNNING TESTS");
             let mut tests_passed = 0;
             let mut tests_failed = 0;
+            let mut tests_errored = 0;
             for yaml in file_yaml {
                 match frontend::iterate_yaml(yaml) {
                     Ok(tests) => {
@@ -93,12 +94,13 @@ fn main() {
                         tests_failed += res.1;
                     }
                     Err(err) => {
+                        tests_errored += 1;
                         err.print_error();
                     }
                 }
             }
-            let overall_result = if tests_failed == 0 {"PASSED"} else {"FAILED"};
-            println!("TEST {} WITH {} SUCCESSES AND {} FAILURES", overall_result, tests_passed, tests_failed);
+            let overall_result = if tests_failed == 0 && tests_errored == 0 {"PASSED"} else {"FAILED"};
+            println!("TEST {} WITH {} SUCCESSES, {} FAILURES, AND {} ERRORS", overall_result, tests_passed, tests_failed, tests_errored);
         },
         Err(e) => {
             let marker = e.marker();

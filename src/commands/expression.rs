@@ -3,21 +3,17 @@ use crate::literal::{Literal, NumberKind};
 use crate::abstract_syntax_tree::{AssignmentValue, Expression, HTTPVerb, HttpResponse, ListExpression, ListCommandOperations, MutateListOperations};
 use crate::err_handle::ChimeraRuntimeFailure;
 use crate::frontend::Context;
-use crate::WEB_REQUEST_DOMAIN;
 
 pub fn expression_command(context: &Context, expression: Expression, variable_map: &mut HashMap<String, AssignmentValue>, web_client: &reqwest::blocking::Client) -> Result<AssignmentValue, ChimeraRuntimeFailure> {
     match expression {
         Expression::LiteralExpression(literal) => { Ok(AssignmentValue::Literal(literal)) },
         Expression::HttpCommand(http_command) => {
-            // Build URL from the domain and path
-            let domain = WEB_REQUEST_DOMAIN.get().expect("Failed to get static global domain when resolving an HTTP expression");
-            let mut resolved_path: String = domain.clone();
-            resolved_path.push_str(http_command.path.as_str());
-
+            let resolved_path = http_command.resolve_path(context, variable_map)?;
             // TODO: need to go through resolved_path and URL escape anything that has to be
             //       escaped, ex space has to be replaced with %20
             // TODO: need to go through resolved_path and fill in any variable query params, ex
             //       - GET /foo?count=(my_count_var)
+            //       See the to do in abstract_syntax_tree::parse_rule_to_path about this
 
             // construct request body
             let mut body_map: HashMap<String, String> = HashMap::new();
@@ -30,16 +26,16 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
             // Make the web request
             let res = match http_command.verb {
                 HTTPVerb::GET => {
-                    web_client.get(resolved_path).send()
+                    web_client.get(resolved_path.as_str()).send()
                 },
                 HTTPVerb::DELETE => {
-                    web_client.delete(resolved_path).send()
+                    web_client.delete(resolved_path.as_str()).send()
                 },
                 HTTPVerb::POST => {
-                    web_client.post(resolved_path).json(&body_map).send()
+                    web_client.post(resolved_path.as_str()).json(&body_map).send()
                 },
                 HTTPVerb::PUT => {
-                    web_client.put(resolved_path).json(&body_map).send()
+                    web_client.put(resolved_path.as_str()).json(&body_map).send()
                 }
             };
             match res {
@@ -50,7 +46,7 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                     let http_response = HttpResponse{ status_code, body };
                     Ok(AssignmentValue::HttpResponse(http_response))
                 },
-                Err(_) => Err(ChimeraRuntimeFailure::WebRequestFailure(http_command.path.clone(), context.current_line))
+                Err(_) => Err(ChimeraRuntimeFailure::WebRequestFailure(resolved_path, context.current_line))
             }
         },
         Expression::ListExpression(list_expression) => {

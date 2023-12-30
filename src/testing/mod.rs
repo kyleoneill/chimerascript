@@ -120,7 +120,7 @@ mod testing {
         let filename = "web_request.chs";
         let tests = read_cs_file(filename);
         let res = TestCase::run_outermost_test_case(tests, client);
-        assert_eq!(res.0, 5, "{} should have 5 passing web request tests but had {}", filename, res.0);
+        assert_eq!(res.0, 6, "{} should have 6 passing web request tests but had {}", filename, res.0);
     }
 
     #[test]
