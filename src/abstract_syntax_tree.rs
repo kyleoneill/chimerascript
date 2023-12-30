@@ -134,9 +134,8 @@ impl ChimeraScriptAST {
 
     fn parse_rule_to_variable_name(pair: Pair<Rule>) -> Result<String, ChimeraCompileError> {
         if pair.as_rule() != Rule::VariableValue {return Err(FailedParseAST("Expected a VariableValue but got a different rule".to_owned()))}
-        let var_name_str = pair.as_str();
-        // We want to remove the opening and closing parenthesis from the var name
-        Ok(var_name_str[1..var_name_str.len() - 1].to_owned())
+        let inner = pair.into_inner().next().expect("A VariableValue must always have a NestedVariable inner");
+        Ok(inner.as_str().to_owned())
     }
 
     fn parse_rule_to_value(pair: Pair<Rule>) -> Result<Value, ChimeraCompileError> {

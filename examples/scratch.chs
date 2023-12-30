@@ -31,3 +31,11 @@ gives me what I need but it's ugly and mixes being whitespace delimited and ; de
   case another_one(expected_failure: true) {
     ASSERT EQUALS 1 2;
   }
+
+function-like-extended
+-----------------------------------------------
+#[expected-failure:true]
+case test() {
+  ASSERT EQUALS 1 1;
+  var foo = LITERAL 10;
+}

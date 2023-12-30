@@ -5,7 +5,7 @@
 // _ marks a rule as silent, it will match but not produce rule tokens
 
 // Implicit whitespacing is not on by default, this enables it
-WHITESPACE = _{ " " }
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
 COMMENT = _{ ("//" ~ ANY*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
 
 Main = { SOI ~ Statement ~ EOI }
@@ -53,10 +53,13 @@ UnsignedNumber = @{ "0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* }
 Boolean = { "true" | "True" | "false" | "False" }
 Null = { ^"null" }
 
+// VARIABLES
+VariableValue = ${ "(" ~ NestedVariable+ ~ ")" }
+NestedVariable = { VariableLegalCharacters+ }
+VariableLegalCharacters = _{ Str | "." }
+
 
 // GENERAL USE
-
-VariableValue = ${ "(" ~ NestedVariable+ ~ ")" }
 
 Value = ${ LiteralValue | VariableValue }
 
@@ -75,8 +78,6 @@ StrWithWhitespace = _{ Str | WhiteSpace }
 VariableOrStr = { VariableValue | StrPlus }
 StrPlus = { Str+ }
 Str = _{ ASCII_ALPHANUMERIC | "-" | "_" }
-
-NestedVariable = _{ Str | "." }
 
 // Text with multiple variables?
 // STRING = { "\"" ~ (TEXT ~ "(" ~ IDENT ~ ")")* ~ TEXT ~ "\"" }
