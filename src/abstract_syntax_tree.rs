@@ -222,6 +222,8 @@ impl ChimeraScriptAST {
                         build_path.push(Value::Literal(Literal::String(buffer)));
                         buffer = String::new();
                     }
+                    // TODO: Should be storing this in a way that will make it easy to resolve variables
+                    //       Probably should just follow the route I went with the path and use a Vec of Value
                     build_path.push(Value::Literal(Literal::String(token.as_str().to_owned())));
                 },
                 _ => return Err(FailedParseAST("Got an invalid rule when parsing a path".to_owned()))
