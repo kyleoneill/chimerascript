@@ -198,7 +198,7 @@ impl ChimeraScriptAST {
         let mut path_inner = pair.into_inner();
         let mut build_path: Vec<Value> = Vec::new();
         let mut buffer: String = String::new();
-        while let Some(mut token) = path_inner.next() {
+        while let Some(token) = path_inner.next() {
             match token.as_rule() {
                 Rule::PathEndpoint => {
                     buffer.push('/');
@@ -536,7 +536,7 @@ impl From<Statement> for HttpCommand {
 }
 
 impl HttpCommand {
-    pub fn resolve_path(&self, context: &Context, variable_map: &mut HashMap<String, AssignmentValue>) -> Result<String, ChimeraRuntimeFailure> {
+    pub fn resolve_path(&self, context: &Context, variable_map: &HashMap<String, AssignmentValue>) -> Result<String, ChimeraRuntimeFailure> {
         let domain = WEB_REQUEST_DOMAIN.get().expect("Failed to get static global domain when resolving an HTTP expression");
         let mut resolved_path: String = domain.clone();
         for portion in &self.path {
