@@ -5,6 +5,7 @@ use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure, VarTypes};
 use crate::err_handle::ChimeraCompileError::FailedParseAST;
 use crate::frontend::{Rule, Context};
 use crate::literal::{Literal, NumberKind};
+use crate::WEB_REQUEST_DOMAIN;
 
 #[derive(Debug)]
 pub struct ChimeraScriptAST {
@@ -192,6 +193,47 @@ impl ChimeraScriptAST {
         }
     }
 
+    fn parse_rule_to_path(pair: Pair<Rule>) -> Result<Vec<Value>, ChimeraCompileError> {
+        if pair.as_rule() != Rule::Path {return Err(FailedParseAST("expected to get a Rule::Path token while parsing a Rule::HttpCommand but did not get one".to_owned()))}
+        let mut path_inner = pair.into_inner();
+        let mut build_path: Vec<Value> = Vec::new();
+        let mut buffer: String = String::new();
+        while let Some(mut token) = path_inner.next() {
+            match token.as_rule() {
+                Rule::PathEndpoint => {
+                    buffer.push('/');
+                    let mut endpoint_portion = token.into_inner();
+                    while let Some(pair) = endpoint_portion.next() {
+                        let kind = pair.into_inner().next().ok_or_else(|| return FailedParseAST("Rule::VariableOrStr should always contain an inner".to_owned()))?;
+                        match kind.as_rule() {
+                            Rule::StrPlus => buffer.push_str(kind.as_str()),
+                            Rule::VariableValue => {
+                                build_path.push(Value::Literal(Literal::String(buffer)));
+                                buffer = String::new();
+                                let var_name = ChimeraScriptAST::parse_rule_to_variable_name(kind)?;
+                                build_path.push(Value::Variable(var_name));
+                            },
+                            _ => return Err(FailedParseAST("Got a rule that should not be possible while parsing a Rule::VariableOrStr".to_owned()))
+                        }
+                    }
+                },
+                Rule::BeginPathArgs => {
+                    if !buffer.is_empty() {
+                        build_path.push(Value::Literal(Literal::String(buffer)));
+                        buffer = String::new();
+                    }
+                    build_path.push(Value::Literal(Literal::String(token.as_str().to_owned())));
+                },
+                _ => return Err(FailedParseAST("Got an invalid rule when parsing a path".to_owned()))
+            }
+        }
+        // check if the buffer is empty, add it if it is
+        if !buffer.is_empty() {
+            build_path.push(Value::Literal(Literal::String(buffer)));
+        }
+        Ok(build_path)
+    }
+
     fn parse_rule_to_expression(pair: Pair<Rule>) -> Result<Expression, ChimeraCompileError> {
         // An Expression is going to contain
         // a. A LiteralValue which will hold some literal
@@ -221,8 +263,7 @@ impl ChimeraScriptAST {
                 };
 
                 let path_token = http_pairs.next().ok_or_else(|| return FailedParseAST("ran out of tokens when getting a Rule::Path for a Rule::HttpCommand".to_string()))?;
-                if path_token.as_rule() != Rule::Path {return Err(FailedParseAST("expected to get a Rule::Path token while parsing a Rule::HttpCommand but did not get one".to_owned()))}
-                let path = path_token.as_str().to_owned();
+                let path = ChimeraScriptAST::parse_rule_to_path(path_token)?;
 
                 // Peek ahead and iterate over the next pairs to get all of the HttpAssignment ones
                 let mut http_assignments: Vec<HttpAssignment> = Vec::new();
@@ -441,6 +482,10 @@ impl Value {
             _ => Err(ChimeraRuntimeFailure::VarWrongType(self.error_print(), VarTypes::Literal, context.current_line))
         }
     }
+
+    pub fn value_from_str(input: &str) -> Self {
+        Self::Literal(Literal::String(input.to_owned()))
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -473,7 +518,7 @@ impl std::fmt::Display for AssertSubCommand {
 #[derive(Debug)]
 pub struct HttpCommand {
     pub verb: HTTPVerb,
-    pub path: String,
+    path: Vec<Value>,
     pub http_assignments: Vec<HttpAssignment>,
     key_val_pairs: Vec<KeyValuePair>
 }
@@ -487,6 +532,18 @@ impl From<Statement> for HttpCommand {
             },
             _ => panic!("tried to use a Statement as an Expression when it was not one")
         }
+    }
+}
+
+impl HttpCommand {
+    pub fn resolve_path(&self, context: &Context, variable_map: &mut HashMap<String, AssignmentValue>) -> Result<String, ChimeraRuntimeFailure> {
+        let domain = WEB_REQUEST_DOMAIN.get().expect("Failed to get static global domain when resolving an HTTP expression");
+        let mut resolved_path: String = domain.clone();
+        for portion in &self.path {
+            let resolved_portion = portion.resolve(context, variable_map)?.to_string();
+            resolved_path.push_str(resolved_portion.as_str());
+        }
+        Ok(resolved_path)
     }
 }
 
@@ -769,25 +826,34 @@ mod ast_tests {
         let http_commands: Vec<HttpCommand> = ["GET /foo/bar", "PUT /foo", "POST /foo", "DELETE /foo"].into_iter().map(|x| str_to_ast(x).statement.into()).collect();
         assert_eq!(http_commands.len(), 4);
         assert_eq!(http_commands[0].verb, HTTPVerb::GET);
-        assert_eq!(http_commands[0].path, "/foo/bar".to_owned());
+        assert_eq!(http_commands[0].path, vec![Value::value_from_str("/foo/bar")]);
         assert_eq!(http_commands[1].verb, HTTPVerb::PUT);
         assert_eq!(http_commands[2].verb, HTTPVerb::POST);
         assert_eq!(http_commands[3].verb, HTTPVerb::DELETE);
 
         let with_path_assignments: HttpCommand = str_to_ast("GET /foo/bar/baz?foo=5&another=\"bar\"&boolean=true").statement.into();
-        assert_eq!(with_path_assignments.path, "/foo/bar/baz?foo=5&another=\"bar\"&boolean=true".to_owned());
+        assert_eq!(with_path_assignments.path, vec![Value::value_from_str("/foo/bar/baz"), Value::value_from_str("?foo=5&another=\"bar\"&boolean=true")]);
 
         // This HttpCommand has a path with args, assignments, and key/value pairs
         // Probably should make this more atomic though (test just assignment, then key/value, then multiple of each)
         let full_expression: HttpCommand = str_to_ast("GET /foo/bar/baz?foo=5&another=\"bar\" some_num=5 some_str=\"value\" timeout=>60 boolKey=>false").statement.into();
         assert_eq!(full_expression.verb, HTTPVerb::GET);
-        assert_eq!(full_expression.path, "/foo/bar/baz?foo=5&another=\"bar\"".to_owned());
+        assert_eq!(full_expression.path, vec![Value::value_from_str("/foo/bar/baz"), Value::value_from_str("?foo=5&another=\"bar\"")]);
         assert_eq!(full_expression.http_assignments.len(), 2);
         assert_eq!(full_expression.http_assignments[0].lhs, "some_num".to_owned());
         assert_eq!(full_expression.http_assignments[0].rhs, Value::Literal(Literal::Number(NumberKind::U64(5))));
         assert_eq!(full_expression.key_val_pairs.len(), 2);
         assert_eq!(full_expression.key_val_pairs[0].key, "timeout".to_owned());
         assert_eq!(full_expression.key_val_pairs[0].value, Value::Literal(Literal::Number(NumberKind::U64(60))));
+
+        let endpoint_with_variable: HttpCommand = str_to_ast("GET /foo/beginning(some_var)end/(another_var)/ending?foo=5&bar=10").statement.into();
+        assert_eq!(endpoint_with_variable.path.len(), 6);
+        assert_eq!(endpoint_with_variable.path[0], Value::value_from_str("/foo/beginning"));
+        assert_eq!(endpoint_with_variable.path[1], Value::Variable("some_var".to_owned()));
+        assert_eq!(endpoint_with_variable.path[2], Value::value_from_str("end/"));
+        assert_eq!(endpoint_with_variable.path[3], Value::Variable("another_var".to_owned()));
+        assert_eq!(endpoint_with_variable.path[4], Value::value_from_str("/ending"));
+        assert_eq!(endpoint_with_variable.path[5], Value::value_from_str("?foo=5&bar=10"));
     }
 
     #[test]

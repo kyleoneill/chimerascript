@@ -19,6 +19,11 @@
     - var res = PUT /test_resource name="new_name"
     - ASSERT STATUS (res) 200
     - ASSERT EQUALS (res.body.name) "new_name"
+    - case: variable-in-endpoint
+      steps:
+        - var partial_request_name = LITERAL "resource"
+        - var response = PUT /test_(partial_request_name)?foo="bar"&baz="bash" name="new_name"
+        - ASSERT STATUS (response) 200
 
 - case: delete-request
   steps:
