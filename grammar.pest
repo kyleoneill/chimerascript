@@ -2,11 +2,15 @@
 // @ marks a rule as an atomic. Prevent implicit whitespace and interior rules are silent
 // $ marks a rule as a compound atomic. Prevent implicit whitespace but inner tokens are produced as normal
 // If a rule is marked as atomic, all of its interior rules will also be atomic
+// ! when placed prior to brackets ( like !{ ASCII_ALPHANUMERIC+ } ) will mark a rule as
+//    non-atomic, even if it was called from an atomic rule
 // _ marks a rule as silent, it will match but not produce rule tokens
 
 // Implicit whitespacing is not on by default, this enables it
-WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
-COMMENT = _{ ("//" ~ ANY*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
+Newline = _{ "\n" | "\r\n" }
+WHITESPACE = _{ " " | "\t" | Newline }
+BlockComment = _{ "/*" ~ (BlockComment | !"*/" ~ ANY)* ~ "*/" }
+COMMENT = _{ ("//" ~ (!Newline ~ ANY)*) | BlockComment }
 
 Main = { SOI ~ Statement ~ EOI }
 
@@ -43,6 +47,7 @@ ListCommandExpr = { ListCommand ~ VariableValue ~ Value? }
 ListCommand = { "LENGTH" | "APPEND" | "REMOVE" | "POP" }
 
 // LITERAL
+// TODO: Add support for JSON here, see TODO.md
 LiteralValue = { QuoteString | Number | Boolean | Null }
 // TODO: Will need to add variable support in here
 QuoteString = { "\"" ~ AggregatedString ~ "\"" }

@@ -2,11 +2,6 @@
     - Needs to specify the web address being pointed at
     - Need to add config file info to README
 - Add support to pass a directory of test files
-- Variable data should be available across sections of a test
-    - `setup` variables should be accessible in `steps` and `teardown`
-    - `steps` variables should be accessible in `teardown`
-    - I think this is done? But I think variables are _too_ permissive. Ex, a nested test can change
-      a var in a parent test. A test can alter a var set in setup? Is this okay?
 - Testing
   - Simple Python webserver vs test harness?
     - Web server already done and is simple, but using it would require a test-script that starts the
@@ -38,7 +33,16 @@
     the script to make this work? That is going to be a huge refactor,
     but doesn't need to affect most of the internals (everything including
     and after the AST)
-
+- Add JSON support
+  - Ex, `var foo = LITERAL JSON {"test":5};`
+  - Allow this to be multiline
+- Add ability for a Literal to be used as a request query/body param
+  - Ex, `GET /foo (bar)` will use a Literal stored in `bar` as the body
+    - Will need to assert here that `bar` is a Literal::Object?
+    - Same sort of thing for a query param `GET /foo?(bar)`
+- Variable scoping
+  - I believe variables currently have no scope inside an outermost test where
+    the variable hashmap is instantiated. Should implement scoping?
 ----
 
 - Lexing?
