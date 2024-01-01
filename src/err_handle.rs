@@ -1,8 +1,8 @@
 use std::fmt::{Display, Formatter};
 
+// TODO: This should no longer be an enum, it's only one variant
 #[derive(Debug)]
 pub enum ChimeraCompileError {
-    InvalidChimeraFile(String),
     FailedParseAST(String)
 }
 
@@ -10,7 +10,6 @@ impl ChimeraCompileError {
     pub fn print_error(&self) {
         eprint!("ERROR: ");
         match self {
-            ChimeraCompileError::InvalidChimeraFile(msg) => eprintln!("Invalid ChimeraScript file. {}", msg),
             ChimeraCompileError::FailedParseAST(msg) => eprintln!("Failed to parse tokens into AST, {}", msg)
         }
     }
@@ -79,6 +78,9 @@ impl Display for ChimeraRuntimeFailure {
 }
 
 impl ChimeraRuntimeFailure {
+    // TODO: This should take a formatter which controls how printing is done. The formatter can be responsible for
+    //       adding space to match the current depth of where something is being printed, be responsible for the
+    //       line/column of an error, etc. See the to-do comment in frontend.rs
     pub fn print_error(&self) {
         eprintln!("{}", self);
     }

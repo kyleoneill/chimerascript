@@ -2,26 +2,40 @@
 // @ marks a rule as an atomic. Prevent implicit whitespace and interior rules are silent
 // $ marks a rule as a compound atomic. Prevent implicit whitespace but inner tokens are produced as normal
 // If a rule is marked as atomic, all of its interior rules will also be atomic
+// ! when placed prior to brackets ( like !{ ASCII_ALPHANUMERIC+ } ) will mark a rule as
+//    non-atomic, even if it was called from an atomic rule
 // _ marks a rule as silent, it will match but not produce rule tokens
 
 // Implicit whitespacing is not on by default, this enables it
-WHITESPACE = _{ " " }
-COMMENT = _{ ("//" ~ ANY*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
+Newline = _{ "\n" | "\r\n" }
+WHITESPACE = _{ " " | "\t" | Newline }
+BlockComment = _{ "/*" ~ (BlockComment | !"*/" ~ ANY)* ~ "*/" }
+COMMENT = _{ ("//" ~ (!Newline ~ ANY)*) | BlockComment }
+EndOf = _{ ";" }
 
-Main = { SOI ~ Statement ~ EOI }
+Main = { SOI ~ Function+ ~ EOI }
 
-Statement = { AssignmentExpr | AssertCommand | PrintCommand | Expression }
+// Function
+Decorators = !{ "[" ~ (StrPlus | DecoratorKeyValuePair) ~ ("," ~ (StrPlus | DecoratorKeyValuePair))* ~ ","? ~ "]" }
+DecoratorKeyValuePair = ${ StrPlus ~ "=" ~ StrPlus }
+Function = ${ (Decorators ~ Newline)? ~ "case " ~ StrPlus ~ "()" ~ Block }
+Block = !{ WHITESPACE ~ "{" ~ (Statement | Function | Teardown)* ~ "}" ~ EndOf? }
+Teardown = { "TEARDOWN" ~ "{" ~ Statement* ~ "}" }
+Statement = { (AssignmentExpr | AssertCommand | PrintCommand | Expression ) ~ EndOf }
 
+// ASSIGNMENT STATEMENT
 AssignmentExpr = { "var" ~ VariableNameAssignment ~ "=" ~ Expression }
 
-Expression = { HttpCommand | "LITERAL" ~ LiteralValue | "LIST" ~ ListExpression }
-
 // ASSERT STATEMENT
-// This looks like `ASSERT EQUALS (my_var.foo) 5 "FailureMessage"`
 AssertCommand = { "ASSERT" ~ Negation? ~ AssertSubCommand ~ Value ~ Value ~ QuoteString? }
 Negation = { "NOT" }
 AssertSubCommand = { "EQUALS" | "GTE" | "GT" | "LTE" | "LT" | "STATUS" | "LENGTH" | "CONTAINS" }
+
+// PRINT STATEMENT
 PrintCommand = { "PRINT" ~ Value }
+
+// EXPRESSION STATEMENT
+Expression = { HttpCommand | "LITERAL" ~ LiteralValue | "LIST" ~ ListExpression }
 
 // HTTP EXPRESSION
 // e.g. PUT /foo?field=5 name="hello" timeout=>60
@@ -43,6 +57,7 @@ ListCommandExpr = { ListCommand ~ VariableValue ~ Value? }
 ListCommand = { "LENGTH" | "APPEND" | "REMOVE" | "POP" }
 
 // LITERAL
+// TODO: Add support for JSON here, see TODO.md
 LiteralValue = { QuoteString | Number | Boolean | Null }
 // TODO: Will need to add variable support in here
 QuoteString = { "\"" ~ AggregatedString ~ "\"" }
@@ -53,10 +68,13 @@ UnsignedNumber = @{ "0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* }
 Boolean = { "true" | "True" | "false" | "False" }
 Null = { ^"null" }
 
+// VARIABLES
+VariableValue = ${ "(" ~ NestedVariable+ ~ ")" }
+NestedVariable = { VariableLegalCharacters+ }
+VariableLegalCharacters = _{ Str | "." }
+
 
 // GENERAL USE
-
-VariableValue = ${ "(" ~ NestedVariable+ ~ ")" }
 
 Value = ${ LiteralValue | VariableValue }
 
@@ -75,8 +93,6 @@ StrWithWhitespace = _{ Str | WhiteSpace }
 VariableOrStr = { VariableValue | StrPlus }
 StrPlus = { Str+ }
 Str = _{ ASCII_ALPHANUMERIC | "-" | "_" }
-
-NestedVariable = _{ Str | "." }
 
 // Text with multiple variables?
 // STRING = { "\"" ~ (TEXT ~ "(" ~ IDENT ~ ")")* ~ TEXT ~ "\"" }

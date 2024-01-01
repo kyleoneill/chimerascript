@@ -1,348 +1,177 @@
 use std::collections::HashMap;
+use std::fmt::Display;
 use pest::error::InputLocation;
+use pest::iterators::Pairs;
 use pest::Parser;
 use pest_derive::Parser;
-use yaml_rust::Yaml;
-use crate::abstract_syntax_tree::{AssignmentValue, ChimeraScriptAST, Statement};
+use crate::abstract_syntax_tree::{AssignmentValue, ChimeraScriptAST, Statement, Function, BlockContents};
 use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure};
 
 pub struct Context {
-    pub current_line: i32,
-    pub area: String
+    pub current_line: i32
 }
 
 impl Context {
     pub fn new() -> Self {
-        Self { current_line: 0, area: "".to_owned()}
+        Self { current_line: 0 }
     }
-}
-
-pub enum TestResult {
-    Passed,
-    Failed,
-    ExpectedFailure,
-    UnexpectedSuccess
 }
 
 #[derive(Parser, Debug)]
 #[grammar = "grammar.pest"]
 pub struct CScriptTokenPairs;
 
-/// A TestCase consists of an expected_failure (test will not count as failed if it fails), a setup
-/// section which will run before the test, a set of steps which make up a test, and a set of teardown
-/// steps which run after the test. The setup and teardown steps are a vec of TestLine as they cannot
-/// contain subtests, but the main test is a vec of Operation as we can nest a nest inside of a test.
-#[derive(Debug)]
-pub struct TestCase {
-    name: String,
-    expected_failure: bool,
-    setup: Option<Vec<TestLine>>,
-    steps: Vec<Operation>,
-    teardown: Option<Vec<TestLine>>
+/// Parse a string with Pest using the Main rule
+pub fn parse_main(input: &str) -> Result<Pairs<Rule>, ChimeraCompileError> {
+    match CScriptTokenPairs::parse(Rule::Main, input) {
+        Ok(parsed) => Ok(parsed),
+        Err(e) => {
+            return Err(handle_ast_err(e))
+        }
+    }
 }
 
-impl TestCase {
-    fn from_yaml(yaml: Yaml) -> Result<Self, ChimeraCompileError> {
-        match yaml {
-            Yaml::Hash(mut case) => {
-                // the smallest possible test file needs at least 2 Yaml items, ex
-                // - case: foo  <-- this is one item
-                //   steps:     <-- This is the second item
-                //     - ASSERT EQUALS 1 1 <-- This is under the second item
-                if case.len() < 2 {
-                    return Err(ChimeraCompileError::InvalidChimeraFile("TestCase must have at least one case and its steps.".to_owned()))
+// TODO: Have to support running a test by name. Should just add a new function for it. Search an ast.functions
+//       for a test/nested-test of a given name and then run that test and its direct parents back to the top
+//       of the stack to the outermost test
+pub fn run_functions(ast: ChimeraScriptAST, web_client: &reqwest::blocking::Client) -> (usize, usize, usize) {
+    let mut tests_passed = 0;
+    let mut tests_failed = 0;
+    let mut tests_errored = 0;
+    for function in ast.functions {
+        if function.is_test_function() {
+            let mut function_variables: HashMap<String, AssignmentValue> = HashMap::new();
+            match run_test_function(function, &mut function_variables, 0, web_client) {
+                Ok((passed, failed, errored)) => { tests_passed += passed; tests_failed += failed; tests_errored += errored },
+                Err(runtime_error) => { runtime_error.print_error(); tests_errored += 1; }
+            }
+        }
+    }
+    (tests_passed, tests_failed, tests_errored)
+}
+
+pub fn print_in_function(thing: &impl Display, depth: usize) {
+    // TODO: Is there a better way to display in a function?
+    for _ in 0..depth {
+        print!(" ");
+    }
+    println!("{}", thing);
+}
+
+pub fn print_function_error(e: ChimeraRuntimeFailure, depth: usize) {
+    // TODO: This is hacky, find a better solution for printing errors at the correct depth
+    //       Maybe pass in a formatter object to print_error() which handles printing
+    //       in the right formatting. See the to-do above the print_error() function
+    for _ in 0..(depth + 1) {
+        eprint!(" ");
+    }
+    e.print_error();
+}
+
+// TODO: Should variable scoping be added? How will this impact the teardown stack (if teardown is added by called non-
+//       test functions)?
+pub fn run_test_function(function: Function, variable_map: &mut HashMap<String, AssignmentValue>, depth: usize, web_client: &reqwest::blocking::Client) -> Result<(usize, usize, usize), ChimeraRuntimeFailure> {
+    print_in_function(&format!("RUNNING TEST {}", function.name), depth);
+    let mut context = Context::new();
+    // TODO: If the ability to call functions is added (like calling an init function) the teardown stack needs to be
+    //       passed as a mut reference into that function so it can add teardown to the stack. Should only be able
+    //       to call non-test functions?
+    let mut teardown_stack: Vec<Statement> = Vec::new();
+    let mut passed = 0;
+    let mut failed = 0;
+    let mut errored = 0;
+    let mut this_test_passed = true;
+
+    // Get these two variables here as they are needed at the end and the for..in.. is about to consume function
+    let is_expected_failure = function.is_expected_failure();
+    let function_name = function.name;
+
+    for block_contents in function.block {
+        match block_contents {
+            BlockContents::Function(nested_function) => {
+                match run_test_function(nested_function, variable_map, depth + 1, web_client) {
+                    Ok(res) => { passed += res.0; failed += res.1 },
+                    Err(e) => { print_function_error(e, depth); errored += 1 }
                 }
-
-                // TODO: The below needs to be refactored, there _has_ to be a cleaner way to do this
-
-                // Get Yaml string versions of our test-case keys
-                let name_key = Yaml::from_str("case");
-                let expected_key = Yaml::from_str("expected-failure");
-                let setup_key = Yaml::from_str("setup");
-                let step_key = Yaml::from_str("steps");
-                let teardown_key = Yaml::from_str("teardown");
-
-                // Grab our test-case keys from the yaml. The case name and steps are mandatory, error if they are not present
-                // expected_failure, setup, and teardown are optional. Default to false and empty arrays if they aren't present
-                let name = if case.contains_key(&name_key) {case.get(&name_key).unwrap().as_str().unwrap().to_owned()} else {return Err(ChimeraCompileError::InvalidChimeraFile("TestCase must have a 'case' key which contains its name.".to_owned()))};
-                let expected_failure_yaml = if case.contains_key(&expected_key) {case.get(&expected_key).unwrap().as_bool()} else {None};
-                let expected_failure = if expected_failure_yaml.is_some() {expected_failure_yaml.unwrap()} else {false};
-                let setup_yaml = if case.contains_key(&setup_key) {case.remove(&setup_key).unwrap()} else {Yaml::Array(vec![])};
-                let steps_yaml = if case.contains_key(&step_key) {case.remove(&step_key).unwrap()} else {return Err(ChimeraCompileError::InvalidChimeraFile("TestCase must have a 'steps' key which contains its steps.".to_owned()))};
-                let teardown_yaml = if case.contains_key(&teardown_key) {case.remove(&teardown_key).unwrap()} else {Yaml::Array(vec![])};
-
-                // Convert setup and teardown from Yaml::Array into Vec<TestLine>
-                // Convert steps from Yaml::Array into Vec<Operation>
-                // setup and teardown do not support sub-testing, so they can only contain test lines and no further tests
-                let setup_vec = TestLine::vec_from_yaml_array(setup_yaml)?;
-                let steps = Operation::vec_from_yaml_array(steps_yaml)?;
-                let teardown_vec = TestLine::vec_from_yaml_array(teardown_yaml)?;
-
-                Ok(TestCase {
-                    name,
-                    expected_failure,
-                    setup: if setup_vec.len() > 0 {Some(setup_vec)} else {None},
-                    steps,
-                    teardown: if teardown_vec.len() > 0 {Some(teardown_vec)} else {None}
-                })
-            }
-            _ => {
-                Err(ChimeraCompileError::InvalidChimeraFile("A yaml TestCase must begin with a Yaml::Hash variant.".to_owned()))
-            }
-        }
-    }
-
-    pub fn print_in_test(thing_to_print: &str, depth: u32) {
-        for _ in 0..depth {
-            print!("  ");
-        }
-        println!("{}", thing_to_print);
-    }
-
-    pub fn run_outermost_test_case(tests: Vec<Self>, web_client: &reqwest::blocking::Client) -> (i32, i32) {
-        let mut tests_passed = 0;
-        let mut tests_failed = 0;
-        for test in tests {
-            let mut test_case_variables: HashMap<String, AssignmentValue> = HashMap::new();
-            match test.run_test_case(&mut test_case_variables, &mut tests_passed, &mut tests_failed, 1, &web_client) {
-                Ok(_) => continue,
-                Err(err) => {
-                    err.print_error();
-                    break;
-                }
-            }
-        }
-        (tests_passed, tests_failed)
-    }
-
-    /// Runs a test case
-    pub fn run_test_case(self, variable_map: &mut HashMap<String, AssignmentValue>, tests_passed: &mut i32, tests_failed: &mut i32, depth: u32, web_client: &reqwest::blocking::Client) -> Result<TestResult, ChimeraRuntimeFailure> {
-        let mut test_passed = true;
-        Self::print_in_test(&format!("RUNNING TEST {}", self.name), depth);
-
-        let mut context = Context::new();
-
-        // TODO: Run setup
-
-        // Run the test
-        context.area = "steps".to_owned();
-        for step in self.steps {
-            match step {
-                Operation::Test(subtest) => {
-                    // TODO: If we are running a test by name, I believe we should run parent tests
-                    //       until we hit the named test, and then ignore subtests. Should
-                    //       probably make a dedicated "run_test_case_by_name" function?
-                    //       Will still need to run setup and teardown
-                    // TODO: If I want to stop inner tests from modifying vars in outer tests, I
-                    //       should be passing in a clone of the hashmap rather than a mut ref.
-                    //       What are the performance implications of this?
-                    // TODO: I don't think we want to ? this, if there is a failure it's just going
-                    //       to kill this method's run and propagate the error upwards. I think
-                    //       we want to match on the Result from run_test_case and handle error
-                    //       printing right here. Might want to add some contextual error gatherer
-                    //       struct or hashmap or something to display all errors at the end of the
-                    //       run as well?
-                    match subtest.run_test_case(variable_map, tests_passed, tests_failed, depth + 1, web_client)? {
-                        TestResult::Failed => {
-                            test_passed = false;
-                        },
-                        _ => ()
+            },
+            BlockContents::Teardown(mut teardown_block) => {
+                // TODO: Swap any Value::Variable uses in each statement for a Value::Literal to "stabilize" the
+                //       teardown statement against any variable changes during the test
+                teardown_stack.append(&mut teardown_block.statements);
+            },
+            BlockContents::Statement(statement) => {
+                // Run statement
+                // Match on the specific kind of runtime failure. If we have a TestFailure then we want to mark
+                // this_test_passed, print the failure, and continue.
+                // If we have any other runtime error, just return the error
+                let statement_result = match statement {
+                    Statement::AssertCommand(assert_command) => {
+                        crate::commands::assert::assert_command(&context, assert_command, variable_map)
+                    },
+                    Statement::AssignmentExpr(assert_expr) => {
+                        crate::commands::assignment::assignment_command(&context, assert_expr, variable_map, web_client)
+                    },
+                    Statement::PrintCommand(print_cmd) => {
+                        crate::commands::print::print_command(&context, print_cmd, variable_map, depth)
+                    },
+                    Statement::Expression(expr) => {
+                        // We are running an expression without assigning it, we can toss the result
+                        match crate::commands::expression::expression_command(&context, expr, variable_map, web_client) {
+                            Ok(_) => Ok(()),
+                            Err(e) => Err(e)
+                        }
                     }
+                };
+                match statement_result {
+                    Ok(_) => (),
+                    Err(runtime_error) => {
+                        match runtime_error {
+                            ChimeraRuntimeFailure::TestFailure(_, _) => {
+                                this_test_passed = false;
+                                print_function_error(runtime_error, depth);
+                                break;
+                            },
+                            // TODO: Need to still process teardown even here
+                            _ => return Err(runtime_error)
+                        }
+                    }
+                }
+            }
+        };
+        context.current_line += 1;
+    };
+
+    // TODO: When the test function ends, process the teardown stack
+
+    match this_test_passed {
+        true => {
+            passed += 1;
+            match is_expected_failure {
+                true => print_in_function(&format!("TEST {} UNEXPECTED SUCCESS", function_name), depth),
+                false => print_in_function(&format!("TEST {} PASSED", function_name), depth)
+            }
+        },
+        false => {
+            match is_expected_failure {
+                true => {
+                    passed += 1;
+                    print_in_function(&format!("TEST {} EXPECTED FAILURE", function_name), depth);
                 },
-                Operation::Line(test_line) => {
-                    match test_line.run_line(variable_map, &context, depth, web_client) {
-                        Ok(_) => (),
-                        Err(e) => {
-                            Self::print_in_test(e.to_string().as_str(), depth);
-                            test_passed = false;
-                            break;
-                        }
-                    }
-                }
-            }
-            context.current_line += 1;
-        }
-
-        // TODO: Run teardown
-
-        // TODO: This entire return structure is bad and I am just tossing out the return value.
-        //       get rid of this and just increment tests_passed and tests_failed in the right spot
-        //       in the method. I believe we should just return Result<(), ChimeraRuntimeFailure>
-        match test_passed {
-            true => {
-                *tests_passed += 1;
-                match self.expected_failure {
-                    true =>  {
-                        Self::print_in_test(&format!("TEST {} UNEXPECTED SUCCESS", self.name), depth);
-                        Ok(TestResult::UnexpectedSuccess)
-                    },
-                    false =>  {
-                        Self::print_in_test(&format!("TEST {} PASSED", self.name), depth);
-                        Ok(TestResult::Passed)
-                    }
-                }
-            },
-            false => {
-                match self.expected_failure {
-                    true => {
-                        Self::print_in_test(&format!("TEST {} EXPECTED FAILURE", self.name), depth);
-                        *tests_passed += 1;
-                        Ok(TestResult::ExpectedFailure)
-                    },
-                    false => {
-                        Self::print_in_test(&format!("TEST {} FAILED", self.name), depth);
-                        *tests_failed += 1;
-                        Ok(TestResult::Failed)
-                    }
+                false => {
+                    failed += 1;
+                    print_in_function(&format!("TEST {} FAILED", function_name), depth)
                 }
             }
         }
     }
-}
-
-/// An Operation is an instruction within a test, it can be either a TestLine or a nested TestCase.
-#[derive(Debug)]
-enum Operation {
-    Test(TestCase),
-    Line(TestLine)
-}
-
-impl Operation {
-    /// Convert a Yaml::Array into a Vec<Operation>
-    pub fn vec_from_yaml_array(input: Yaml) -> Result<Vec<Self>, ChimeraCompileError> {
-        match input {
-            Yaml::Array(yaml_arr) => {
-                let mut res: Vec<Self> = Vec::new();
-                // Iterate through the Yaml::Array elements
-                for yaml in yaml_arr.to_vec() {
-                    match yaml {
-                        // If the element is a Yaml::Hash then it's a nested test-case
-                        Yaml::Hash(nested_test_case) => {
-                            let test_case = TestCase::from_yaml(Yaml::Hash(nested_test_case))?;
-                            res.push(Operation::Test(test_case));
-                        }
-                        // If the element is a Yaml::String then it's a test-case line
-                        Yaml::String(yaml_line) => {
-                            let stringified_line = yaml_line.as_str();
-                            let parsed = CScriptTokenPairs::parse(Rule::Statement, stringified_line);
-                            match parsed {
-                                Ok(parsed_line) => {
-                                    let ast = ChimeraScriptAST::from_pairs(parsed_line)?;
-                                    let test_line = TestLine { line: ast };
-                                    res.push(Operation::Line(test_line));
-                                }
-                                Err(e) => {
-                                    return Err(handle_ast_err(e));
-                                }
-                            }
-                        }
-                        _ => return Err(ChimeraCompileError::InvalidChimeraFile("A test case line must contain either a string to parse into ChimeraScript or a nested TestCase, but got neither.".to_owned()))
-                    }
-                }
-                Ok(res)
-            }
-            _ => return Err(ChimeraCompileError::InvalidChimeraFile("Cannot convert a Yaml to a vec unless it's a Yaml::Array variant.".to_owned()))
-        }
-    }
-}
-
-/// A TestLine is a line of ChimeraScript
-#[derive(Debug)]
-struct TestLine {
-    line: ChimeraScriptAST
-}
-
-impl TestLine {
-    /// Convert a Yaml::Array into a Vec<TestLine>
-    pub fn vec_from_yaml_array(input: Yaml) -> Result<Vec<Self>, ChimeraCompileError> {
-        // TODO: There is a lot of overlap between this and the Operation method of the same name,
-        //       I should make this DRY
-        match input {
-            Yaml::Array(yaml_arr) => {
-                let mut res: Vec<Self> = Vec::new();
-                // Iterate through the Yaml::Array elements
-                for yaml in yaml_arr.to_vec() {
-                    match yaml {
-                        // If the element is a Yaml::Hash then it's a nested test-case
-                        Yaml::Hash(_nested_test_case) => {
-                            return Err(ChimeraCompileError::InvalidChimeraFile("Setup and teardown sections cannot contain a nested sub-case.".to_owned()));
-                        }
-                        // If the element is a Yaml::String then it's a test-case line
-                        Yaml::String(yaml_line) => {
-                            let stringified_line = yaml_line.as_str();
-                            let parsed = CScriptTokenPairs::parse(Rule::Statement, stringified_line);
-                            match parsed {
-                                Ok(parsed_line) => {
-                                    let ast = ChimeraScriptAST::from_pairs(parsed_line)?;
-                                    let test_line = TestLine { line: ast };
-                                    res.push(test_line);
-                                }
-                                Err(e) => {
-                                    return Err(handle_ast_err(e))
-                                }
-                            }
-                        }
-                        _ => return Err(ChimeraCompileError::InvalidChimeraFile("A test case setup or teardown line can only contain a string to parse into ChimeraScript, but got something else.".to_owned()))
-                    }
-                }
-                Ok(res)
-            }
-            _ => return Err(ChimeraCompileError::InvalidChimeraFile("Cannot convert a Yaml to a vec unless it's a Yaml::Array variant.".to_owned()))
-        }
-    }
-
-    pub fn run_line(self, variable_map: &mut HashMap<String, AssignmentValue>, context: &Context, depth: u32, web_client: &reqwest::blocking::Client) -> Result<(), ChimeraRuntimeFailure> {
-        let syntax_tree = self.line;
-        match syntax_tree.statement {
-            Statement::AssertCommand(assert_command) => {
-                crate::commands::assert::assert_command(context, assert_command, variable_map)
-            },
-            Statement::AssignmentExpr(assert_expr) => {
-                crate::commands::assignment::assignment_command(context, assert_expr, variable_map, web_client)
-            },
-            Statement::PrintCommand(print_cmd) => {
-                crate::commands::print::print_command(context, print_cmd, variable_map, depth)
-            },
-            Statement::Expression(expr) => {
-                // We are running an expression without assigning it, we can toss the result
-                match crate::commands::expression::expression_command(context, expr, variable_map, web_client) {
-                    Ok(_) => Ok(()),
-                    Err(e) => Err(e)
-                }
-            }
-        }
-    }
+    Ok((passed, failed, errored))
 }
 
 fn handle_ast_err(e: pest::error::Error<Rule>) -> ChimeraCompileError {
+    // TODO: Fix this now that actual language parsing is implemented
     let position = match e.location {
         InputLocation::Pos(pos) => pos,
         InputLocation::Span((start, _end)) => start
     };
     ChimeraCompileError::FailedParseAST(format!("Failed to parse ChimeraScript at position {} of line: {}", position, e.line()).to_owned())
-    // match e.variant {
-    //     pest::error::ErrorVariant::ParsingError {
-    //         positives,
-    //         negatives
-    //     } => {
-    //         ChimeraError::FailedParseAST("".to_owned())
-    //     }
-    //     _ => ChimeraError::FailedParseAST("UNHANDLED CUSTOM ERR MSG".to_owned())
-    // }
-}
-
-pub fn iterate_yaml(yaml_doc: Yaml) -> Result<Vec<TestCase>, ChimeraCompileError> {
-    match yaml_doc {
-        Yaml::Array(yaml_arr) => {
-            let mut ret: Vec<TestCase> = Vec::new();
-            for yaml in yaml_arr {
-                let test_case = TestCase::from_yaml(yaml)?;
-                ret.push(test_case);
-            }
-            Ok(ret)
-        }
-        _ => {
-            Err(ChimeraCompileError::InvalidChimeraFile("chs file should begin with a list of test cases but it did not.".to_owned()))
-        }
-    }
 }
