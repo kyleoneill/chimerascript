@@ -1,39 +1,92 @@
 use std::collections::HashMap;
 use std::fmt::Formatter;
-use pest::iterators::{Pair, Pairs};
+use pest::iterators::Pair;
 use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure, VarTypes};
 use crate::err_handle::ChimeraCompileError::FailedParseAST;
 use crate::frontend::{Rule, Context};
 use crate::literal::{Literal, NumberKind};
-use crate::WEB_REQUEST_DOMAIN;
+use crate::{frontend, WEB_REQUEST_DOMAIN};
 
 #[derive(Debug)]
 pub struct ChimeraScriptAST {
-    pub statement: Statement
+    pub functions: Vec<Function>
 }
 
 impl ChimeraScriptAST {
-    /// Convert Pest tokens into an abstract syntax tree.
-    pub fn from_pairs(pairs: Pairs<Rule>) -> Result<Self, ChimeraCompileError> {
-        // There should only be one Pair<Rule> here. Do I even need a loop or should I just get
-        // the first/next out of the iter?
-        for pair in pairs {
-            let statement = ChimeraScriptAST::parse_rule_to_statement(pair)?;
-            return Ok(ChimeraScriptAST { statement })
+    /// Generate an abstract syntax tree from a string of ChimeraScript
+    pub fn new(input: &str) -> Result<Self, ChimeraCompileError> {
+        let mut pairs = frontend::parse_str(input)?;
+        let main_pair = pairs.next().ok_or_else(|| panic!("Did not get any pairs after parsing a string into a Rule::Main but there must be at least one"))?;
+        if main_pair.as_rule() != Rule::Main { panic!("Expected the first pair of a parse to be Rule::Main but it was not") };
+        let mut function_pairs = main_pair.into_inner();
+        let mut functions: Vec<Function> = Vec::new();
+        while let Some(function_pair) = function_pairs.next() {
+            let function = Self::pair_to_function(function_pair)?;
+            functions.push(function);
         }
-        Err(FailedParseAST("did not get any Rule pairs".to_owned()))
+        Ok(Self { functions })
     }
 
-    fn parse_rule_to_statement(pair: Pair<Rule>) -> Result<Statement, ChimeraCompileError> {
-        match pair.as_rule() {
-            Rule::Statement => {
-                // The outermost layer is going to be a Rule::Statement, we want to just into_inner
-                // it and get to actual parsing
-                match pair.into_inner().peek() {
-                    Some(inner) => ChimeraScriptAST::parse_rule_to_statement(inner),
-                    None => Err(FailedParseAST("Rule::Statement variant did not contain inner token".to_owned()))
+    fn pair_to_function(function_pair: Pair<Rule>) -> Result<Function, ChimeraCompileError> {
+        if function_pair.as_rule() != Rule::Function { panic!("Expected pairs within a Rule::Main to only be Rule::Function but one was not") };
+        let mut function_pairs = function_pair.into_inner();
+        let mut current_pair = function_pairs.next().expect("Rule::Function contained no inner pairs when it must have at least two");
+        let mut decorators: Vec<Decorator> = Vec::new();
+        if current_pair.as_rule() == Rule::Decorators {
+            let mut decorator_pairs = current_pair.into_inner();
+            while let Some(decorator_pair) = decorator_pairs.next() {
+                match decorator_pair.as_rule() {
+                    Rule::StrPlus => {
+                        decorators.push(Decorator::Key(decorator_pair.as_str().to_owned()))
+                    },
+                    Rule::DecoratorKeyValuePair => {
+                        let mut kv_inner = decorator_pair.into_inner();
+                        let key_pair = kv_inner.next().expect("A Rule::DecoratorKeyValuePair must contain a key pair");
+                        let value_pair = kv_inner.next().expect("A Rule::DecoratorKeyValuePair must contain a value pair");
+                        decorators.push(Decorator::KeyValue((key_pair.as_str().to_owned(), value_pair.as_str().to_owned())));
+                    },
+                    _ => panic!("Got an invalid Rule variant inside of a Rule::Decorator")
                 }
             }
+            current_pair = function_pairs.next().expect("A Rule::Function must contain at least one pair after a Rule::Decorator but it did not");
+        }
+        if current_pair.as_rule() != Rule::StrPlus { panic!("Expected a StrPlus rule inside a Rule::Function for the function name") };
+        let name = current_pair.as_str().to_owned();
+        let block = ChimeraScriptAST::pair_to_block(function_pairs.next().expect("Expected a Rule::Block inside a Rule::Function"))?;
+        Ok(Function { decorators, name, block })
+    }
+
+    fn pair_to_block(block_pair: Pair<Rule>) -> Result<Vec<BlockContents>, ChimeraCompileError> {
+        if block_pair.as_rule() != Rule::Block { panic!("Expected rule to be Rule::Block when parsing into a Vec<BlockContents>") };
+        let mut block: Vec<BlockContents> = Vec::new();
+        let mut block_pair_inner = block_pair.into_inner();
+        while let Some(block_content) = block_pair_inner.next() {
+            let content = match block_content.as_rule() {
+                Rule::Statement => BlockContents::Statement(ChimeraScriptAST::pair_to_statement(block_content)?),
+                Rule::Function => BlockContents::Function(ChimeraScriptAST::pair_to_function(block_content)?),
+                Rule::Teardown => BlockContents::Teardown(ChimeraScriptAST::pair_to_teardown(block_content)?),
+                _ => panic!("Got an invalid rule when parsing a Rule::Block inner")
+            };
+            block.push(content);
+        }
+        Ok(block)
+    }
+
+    fn pair_to_teardown(teardown_pair: Pair<Rule>) -> Result<Teardown, ChimeraCompileError> {
+        if teardown_pair.as_rule() != Rule::Teardown { return Err(FailedParseAST("Got invalid data when reading a teardown block".to_owned())) };
+        let mut statements: Vec<Statement> = Vec::new();
+        let mut teardown_inner = teardown_pair.into_inner();
+        while let Some(teardown_statement) = teardown_inner.next() {
+            statements.push(ChimeraScriptAST::pair_to_statement(teardown_statement)?)
+        }
+        Ok(Teardown { statements } )
+    }
+
+    fn pair_to_statement(statement_pair: Pair<Rule>) -> Result<Statement, ChimeraCompileError> {
+        if statement_pair.as_rule() != Rule::Statement { return Err(FailedParseAST("Got invalid data when reading a statement".to_owned())) };
+        let statement_inner = statement_pair.into_inner().next().expect("A Rule::Statement inner must always have one inner pair");
+        // TODO: Break these up into their own individual "pair_to_x" functions. Clean up how they're written
+        match statement_inner.as_rule() {
             Rule::AssertCommand => {
                 // An AssertCommand inner is going to contain
                 // 1. Optional Negation
@@ -41,7 +94,7 @@ impl ChimeraScriptAST {
                 // 3. Value
                 // 4. Value
                 // 5. Optional QuoteString
-                let mut pairs = pair.into_inner();
+                let mut pairs = statement_inner.into_inner();
 
                 // Peek ahead to see if our inner contains an optional Negation
                 let negate_assertion = match pairs.peek() {
@@ -100,7 +153,7 @@ impl ChimeraScriptAST {
                 // An AssignmentExpr is going to contain
                 // 1. A string representing a variable name
                 // 2. An expression
-                let mut pairs = pair.into_inner();
+                let mut pairs = statement_inner.into_inner();
 
                 let next_str = pairs.next().ok_or_else(|| return FailedParseAST("ran out of tokens when getting variable name of an AssignmentExpr".to_owned()))?;
                 if next_str.as_rule() != Rule::VariableNameAssignment {return Err(FailedParseAST("Rule::AssignmentExpr did not contain a Rule::VariableNameAssignment to use as a variable name".to_owned()))}
@@ -117,7 +170,7 @@ impl ChimeraScriptAST {
             Rule::PrintCommand => {
                 // A PrintCommand is going to contain
                 // 1. A value to print
-                let mut pairs = pair.into_inner();
+                let mut pairs = statement_inner.into_inner();
 
                 let next_value = pairs.next().ok_or_else(|| return FailedParseAST("ran out of tokens when getting a value out of a PrintCommand".to_owned()))?;
                 let next_value = ChimeraScriptAST::parse_rule_to_value(next_value)?;
@@ -125,7 +178,7 @@ impl ChimeraScriptAST {
             },
             Rule::Expression => {
                 // Moved to shared method as AssignmentExpr also needs to construct an Expression
-                let expression = ChimeraScriptAST::parse_rule_to_expression(pair)?;
+                let expression = ChimeraScriptAST::parse_rule_to_expression(statement_inner)?;
                 Ok(Statement::Expression(expression))
             },
             _ => { Err(FailedParseAST("got an invalid Rule variant while constructing a Statement".to_owned())) }
@@ -367,6 +420,31 @@ impl ChimeraScriptAST {
             _ => { return Err(FailedParseAST("Expression contained an invalid inner rule".to_owned())) }
         }
     }
+}
+
+#[derive(Debug)]
+pub enum Decorator {
+    Key(String),
+    KeyValue((String, String))
+}
+
+#[derive(Debug)]
+pub enum BlockContents {
+    Function(Function),
+    Statement(Statement),
+    Teardown(Teardown)
+}
+
+#[derive(Debug)]
+pub struct Teardown {
+    statements: Vec<Statement>
+}
+
+#[derive(Debug)]
+pub struct Function {
+    decorators: Vec<Decorator>,
+    name: String,
+    block: Vec<BlockContents>
 }
 
 #[derive(Debug)]
@@ -690,42 +768,38 @@ mod ast_tests {
     use crate::frontend::CScriptTokenPairs;
     use super::*;
 
-    fn str_to_ast(input: &str) -> ChimeraScriptAST {
-        let pairs = match CScriptTokenPairs::parse(Rule::Statement, input) {
-            Ok(p) => p,
-            Err(_) => panic!("Failed to parse a ChimeraScript string with Pest.")
-        };
-        match ChimeraScriptAST::from_pairs(pairs) {
-            Ok(ast) => ast,
-            Err(_chimera_error) => {
-                panic!("Failed to convert Pest tokens into an AST.")
-            }
-        }
+    // TODO: Add tests here for a test-case functions, decorators, teardown, nested functions
+    // TODO: Add tests for statements being broken up into multiple lines
+    // TODO: Add a test that a statement without an ending ';' fails to parse
+
+    fn str_to_statement(input: &str) -> Statement {
+        let mut pairs = CScriptTokenPairs::parse(Rule::Statement, input).expect("Failed to parse a ChimeraScript string with Pest.");
+        let statement_pair = pairs.next().expect("Did not get any pairs after parsing a string with a Rule::Statement");
+        ChimeraScriptAST::pair_to_statement(statement_pair).expect("Failed to convert Pair<Rule> into a Statement")
     }
 
     #[test]
     /// Test the simplest possible assertion, 1 == 1, resolves to be an AssertCommand for two literals
     fn simple_parse() {
-        let ast = str_to_ast("ASSERT EQUALS 1 1");
-        match ast.statement {
+        match str_to_statement("ASSERT EQUALS 1 1;") {
             Statement::AssertCommand(assert_command) => {
                 assert_eq!(assert_command.negate_assertion, false, "negate_assertion should be false for an assertion which does not contain 'NOT'.");
                 assert_eq!(assert_command.subcommand, AssertSubCommand::EQUALS, "Assertion using EQUALS should have an AssertSubCommand::Equals subcommand.");
                 assert_eq!(assert_command.left_value, Value::Literal(Literal::Number(NumberKind::U64(1))), "Assertion with a numerical literal should have a Literal::Int() value.");
                 assert_eq!(assert_command.right_value, Value::Literal(Literal::Number(NumberKind::U64(1))));
-                assert_eq!(assert_command.error_message.is_none(), true, "Assertion error_message should be None when no message is specified.");
+                assert!(assert_command.error_message.is_none(), "Assertion error_message should be None when no message is specified.");
             },
-            _ => panic!("AST statement of a very simple assertion was not resolved as an AssertCommand variant.")
+            _ => panic!("An ASSERT statement was not resolved into a Statement::AssertCommand.")
         }
     }
 
     #[test]
     /// Test that comments work as expected. Comments should be ignored and not generate any rule pairs
     fn comments() {
-        let assertion_with_comment: AssertCommand = str_to_ast("ASSERT EQUALS 1 1 //this assertion ends with a comment").statement.into();
+        let assertion_with_comment: AssertCommand = str_to_statement("ASSERT EQUALS 1 1; //this assertion ends with a comment").into();
         assert_eq!(assertion_with_comment.subcommand, AssertSubCommand::EQUALS);
 
-        let assertion_with_midline_comment: AssertCommand = str_to_ast("ASSERT EQUALS 1 /*this is a midline comment*/ 1").statement.into();
+        let assertion_with_midline_comment: AssertCommand = str_to_statement("ASSERT EQUALS 1 /*this is a midline comment*/ 1;").into();
         assert_eq!(assertion_with_midline_comment.subcommand, AssertSubCommand::EQUALS);
         assert_eq!(assertion_with_midline_comment.left_value, Value::Literal(Literal::Number(NumberKind::U64(1))));
         assert_eq!(assertion_with_midline_comment.right_value, Value::Literal(Literal::Number(NumberKind::U64(1))));
@@ -734,24 +808,23 @@ mod ast_tests {
     #[test]
     /// Test an EQUALS assertion which is negated and has an error message
     fn full_equality_assertion() {
-        let ast = str_to_ast("ASSERT NOT EQUALS 1 2 \"foo\"");
-        match ast.statement {
+        match str_to_statement("ASSERT NOT EQUALS 1 2 \"foo\";") {
             Statement::AssertCommand(assert_command) => {
-                assert_eq!(assert_command.negate_assertion, true, "negate_assertion should be true for an assertion which contains 'NOT'.");
+                assert!(assert_command.negate_assertion, "negate_assertion should be true for an assertion which contains 'NOT'.");
                 assert_eq!(assert_command.subcommand, AssertSubCommand::EQUALS, "Assertion using EQUALS should have an AssertSubCommand::Equals subcommand.");
                 assert_eq!(assert_command.left_value, Value::Literal(Literal::Number(NumberKind::U64(1))), "Assertion with a numerical literal should have a Value::Literal(Literal::Int()) value.");
                 assert_eq!(assert_command.right_value, Value::Literal(Literal::Number(NumberKind::U64(2))));
-                assert_eq!(assert_command.error_message.is_some(), true, "Assertion error_message should be Some() when message is specified.");
+                assert!(assert_command.error_message.is_some(), "Assertion error_message should be Some() when message is specified.");
                 assert_eq!(assert_command.error_message.unwrap(), "\"foo\"".to_owned(), "Assertion error message was not equal to the supplied message");
             },
-            _ => panic!("AST statement of a very simple assertion was not resolved as an AssertCommand variant.")
+            _ => panic!("An ASSERT statement was not resolved into a Statement::AssertCommand")
         }
     }
 
     #[test]
     /// Test LITERAL values
     fn literal_values() {
-        let trees: Vec<Literal> = ["LITERAL \"this is a string\"", "LITERAL \"foo\"", "LITERAL 5", "LITERAL 0", "LITERAL -10", "LITERAL 5.5", "LITERAL -10.7", "LITERAL true", "LITERAL True", "LITERAL false", "LITERAL False", "LITERAL null", "LITERAL Null"].into_iter().map(|x| str_to_ast(x).statement.into()).collect();
+        let trees: Vec<Literal> = ["LITERAL \"this is a string\";", "LITERAL \"foo\";", "LITERAL 5;", "LITERAL 0;", "LITERAL -10;", "LITERAL 5.5;", "LITERAL -10.7;", "LITERAL true;", "LITERAL True;", "LITERAL false;", "LITERAL False;", "LITERAL null;", "LITERAL Null;"].into_iter().map(|x| str_to_statement(x).into()).collect();
         assert_eq!(trees.len(), 13);
         assert_eq!(trees[0], Literal::String("this is a string".to_owned()));
         assert_eq!(trees[1], Literal::String("foo".to_owned()));
@@ -769,9 +842,9 @@ mod ast_tests {
     }
 
     #[test]
-    /// Test the ASSERT subcommands; EQUALS, GTE, GT, LTE, LT, STATUS
+    /// Test the ASSERT subcommands
     fn assertion_subcommands() {
-        let trees: Vec<AssertCommand> = ["ASSERT EQUALS 1 1", "ASSERT GTE 1 1", "ASSERT GT 1 1", "ASSERT LTE 1 1", "ASSERT LT 1 1", "ASSERT STATUS 1 1", "ASSERT LENGTH (foo) 1", "ASSERT CONTAINS (foo) 1"].into_iter().map(|x| str_to_ast(x).statement.into()).collect();
+        let trees: Vec<AssertCommand> = ["ASSERT EQUALS 1 1;", "ASSERT GTE 1 1;", "ASSERT GT 1 1;", "ASSERT LTE 1 1;", "ASSERT LT 1 1;", "ASSERT STATUS 1 1;", "ASSERT LENGTH (foo) 1;", "ASSERT CONTAINS (foo) 1;"].into_iter().map(|x| str_to_statement(x).into()).collect();
         assert_eq!(trees.len(), 8);
         assert_eq!(trees[0].subcommand, AssertSubCommand::EQUALS);
         assert_eq!(trees[1].subcommand, AssertSubCommand::GTE);
@@ -786,20 +859,15 @@ mod ast_tests {
     #[test]
     /// Test assertions with each of the Value variants
     fn assertion_values() {
-        let trees: Vec<AssertCommand> = ["ASSERT EQUALS (foo) 1", "ASSERT EQUALS \"test\" 10", "ASSERT EQUALS true false"].into_iter().map(|x| str_to_ast(x).statement.into()).collect();
-        assert_eq!(trees.len(), 3);
-        assert_eq!(trees[0].left_value, Value::Variable("foo".to_owned()));
-        assert_eq!(trees[0].right_value, Value::Literal(Literal::Number(NumberKind::U64(1))));
-        assert_eq!(trees[1].left_value, Value::Literal(Literal::String("test".to_owned())));
-        assert_eq!(trees[2].left_value, Value::Literal(Literal::Bool(true)));
-        assert_eq!(trees[2].right_value, Value::Literal(Literal::Bool(false)));
+        let assertion: AssertCommand = str_to_statement("ASSERT EQUALS (foo) 1;").into();
+        assert_eq!(assertion.left_value, Value::Variable("foo".to_owned()));
+        assert_eq!(assertion.right_value, Value::Literal(Literal::Number(NumberKind::U64(1))));
     }
 
     #[test]
     /// Test a PRINT statement
     fn print_statement() {
-        let ast = str_to_ast("PRINT 5");
-        match ast.statement {
+        match str_to_statement("PRINT 5;") {
             Statement::PrintCommand(val) => assert_eq!(val, Value::Literal(Literal::Number(NumberKind::U64(5)))),
             _ => panic!("Statement for a PRINT did not resolve to the correct variant.")
         }
@@ -808,14 +876,10 @@ mod ast_tests {
     #[test]
     /// Test a simple assignment with a literal expression
     fn assignment_expression() {
-        let ast = str_to_ast("var foo = LITERAL 5");
-        match ast.statement {
+        match str_to_statement("var foo = LITERAL 5;") {
             Statement::AssignmentExpr(assignment_expr) => {
                 assert_eq!(assignment_expr.var_name, "foo".to_owned());
-                match assignment_expr.expression {
-                    Expression::LiteralExpression(literal_expression) => assert_eq!(literal_expression, Literal::Number(NumberKind::U64(5))),
-                    _ => panic!("Assignment expression assigning a LITERAL did not resolve with the correct expression field")
-                }
+                assert_eq!(assignment_expr.expression, Expression::LiteralExpression(Literal::Number(NumberKind::U64(5))));
             },
             _ => panic!("Statement for an assignment expression did not resolve to the correct variant.")
         }
@@ -824,7 +888,7 @@ mod ast_tests {
     #[test]
     /// Test an Http command expression
     fn http_expression() {
-        let http_commands: Vec<HttpCommand> = ["GET /foo/bar", "PUT /foo", "POST /foo", "DELETE /foo"].into_iter().map(|x| str_to_ast(x).statement.into()).collect();
+        let http_commands: Vec<HttpCommand> = ["GET /foo/bar;", "PUT /foo;", "POST /foo;", "DELETE /foo;"].into_iter().map(|x| str_to_statement(x).into()).collect();
         assert_eq!(http_commands.len(), 4);
         assert_eq!(http_commands[0].verb, HTTPVerb::GET);
         assert_eq!(http_commands[0].path, vec![Value::value_from_str("/foo/bar")]);
@@ -832,12 +896,12 @@ mod ast_tests {
         assert_eq!(http_commands[2].verb, HTTPVerb::POST);
         assert_eq!(http_commands[3].verb, HTTPVerb::DELETE);
 
-        let with_path_assignments: HttpCommand = str_to_ast("GET /foo/bar/baz?foo=5&another=\"bar\"&boolean=true").statement.into();
+        let with_path_assignments: HttpCommand = str_to_statement("GET /foo/bar/baz?foo=5&another=\"bar\"&boolean=true;").into();
         assert_eq!(with_path_assignments.path, vec![Value::value_from_str("/foo/bar/baz"), Value::value_from_str("?foo=5&another=\"bar\"&boolean=true")]);
 
         // This HttpCommand has a path with args, assignments, and key/value pairs
         // Probably should make this more atomic though (test just assignment, then key/value, then multiple of each)
-        let full_expression: HttpCommand = str_to_ast("GET /foo/bar/baz?foo=5&another=\"bar\" some_num=5 some_str=\"value\" timeout=>60 boolKey=>false").statement.into();
+        let full_expression: HttpCommand = str_to_statement("GET /foo/bar/baz?foo=5&another=\"bar\" some_num=5 some_str=\"value\" timeout=>60 boolKey=>false;").into();
         assert_eq!(full_expression.verb, HTTPVerb::GET);
         assert_eq!(full_expression.path, vec![Value::value_from_str("/foo/bar/baz"), Value::value_from_str("?foo=5&another=\"bar\"")]);
         assert_eq!(full_expression.http_assignments.len(), 2);
@@ -847,7 +911,7 @@ mod ast_tests {
         assert_eq!(full_expression.key_val_pairs[0].key, "timeout".to_owned());
         assert_eq!(full_expression.key_val_pairs[0].value, Value::Literal(Literal::Number(NumberKind::U64(60))));
 
-        let endpoint_with_variable: HttpCommand = str_to_ast("GET /foo/beginning(some_var)end/(another_var)/ending?foo=5&bar=10").statement.into();
+        let endpoint_with_variable: HttpCommand = str_to_statement("GET /foo/beginning(some_var)end/(another_var)/ending?foo=5&bar=10;").into();
         assert_eq!(endpoint_with_variable.path.len(), 6);
         assert_eq!(endpoint_with_variable.path[0], Value::value_from_str("/foo/beginning"));
         assert_eq!(endpoint_with_variable.path[1], Value::Variable("some_var".to_owned()));
@@ -860,7 +924,8 @@ mod ast_tests {
     #[test]
     /// Test the LIST command
     fn list_expression() {
-        let new_empty_list: ListExpression = str_to_ast("LIST NEW []").statement.into();
+        // Test that a list can be created without any initial data
+        let new_empty_list: ListExpression = str_to_statement("LIST NEW [];").into();
         match new_empty_list {
             ListExpression::New(list_values) => {
                 assert_eq!(list_values.len(), 0, "Expected a list created with zero elements in it to have a length of 0 but it was not")
@@ -868,7 +933,8 @@ mod ast_tests {
             _ => panic!("Expected a ListExpression::New when making a new list but did not get one")
         }
 
-        let new_list_expression: ListExpression = str_to_ast("LIST NEW [1, true, \"hello world\", (my_var)]").statement.into();
+        // Test creating a new list with different types of data as initial values
+        let new_list_expression: ListExpression = str_to_statement("LIST NEW [1, true, \"hello world\", (my_var)];").into();
         match new_list_expression {
             ListExpression::New(list_values) => {
                 assert_eq!(list_values.len(), 4, "Expected list values to contain 4 values when 4 were provided to LIST NEW");
@@ -879,7 +945,9 @@ mod ast_tests {
             }
             ListExpression::ListArgument(_) => panic!("Got a ListExpression::ListArgument variant when a ListExpression::New was expected")
         }
-        let list_append_expression: ListExpression = str_to_ast("LIST APPEND (my_list) 5").statement.into();
+
+        // Test appending a literal to a list
+        let list_append_expression: ListExpression = str_to_statement("LIST APPEND (my_list) 5;").into();
         match list_append_expression {
             ListExpression::New(_) => panic!("Got a ListExpression::New variant when a ListExpression::ListArgument was expected"),
             ListExpression::ListArgument(list_command) => {
@@ -897,7 +965,9 @@ mod ast_tests {
                 }
             }
         }
-        let list_remove_expression: ListExpression = str_to_ast("LIST REMOVE (my_list) 10").statement.into();
+
+        // Test removing an item from a list
+        let list_remove_expression: ListExpression = str_to_statement("LIST REMOVE (my_list) 10;").into();
         match list_remove_expression {
             ListExpression::New(_) => panic!("Got a ListExpression::New variant when a ListExpression::ListArgument was expected"),
             ListExpression::ListArgument(list_command) => {
@@ -915,7 +985,9 @@ mod ast_tests {
                 }
             }
         }
-        let list_length_expression: ListExpression = str_to_ast("LIST LENGTH (some_list)").statement.into();
+
+        // Test getting the length of a list
+        let list_length_expression: ListExpression = str_to_statement("LIST LENGTH (some_list);").into();
         match list_length_expression {
             ListExpression::New(_) => panic!("Got a ListExpression::New variant when a ListExpression::ListArgument was expected"),
             ListExpression::ListArgument(list_command) => {
@@ -926,7 +998,9 @@ mod ast_tests {
                 }
             }
         }
-        let list_pop_expression: ListExpression = str_to_ast("LIST POP (some_list)").statement.into();
+
+        // Test popping an item off of a list
+        let list_pop_expression: ListExpression = str_to_statement("LIST POP (some_list);").into();
         match list_pop_expression {
             ListExpression::New(_) => panic!("Got a ListExpression::New variant when a ListExpression::ListArgument was expected"),
             ListExpression::ListArgument(list_command) => {
@@ -942,8 +1016,10 @@ mod ast_tests {
                 }
             }
         }
+
+        // Test that a list cannot be created with an invalid comma separation
         let failure_res = std::panic::catch_unwind(|| {
-            str_to_ast("LIST NEW [1,]");
+            str_to_statement("LIST NEW [1,];");
         });
         assert!(failure_res.is_err(), "Expected list creation to fail when the only value passed in was comma separated");
     }

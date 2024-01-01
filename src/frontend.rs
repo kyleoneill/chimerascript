@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use pest::error::InputLocation;
+use pest::iterators::Pairs;
 use pest::Parser;
 use pest_derive::Parser;
-use yaml_rust::Yaml;
 use crate::abstract_syntax_tree::{AssignmentValue, ChimeraScriptAST, Statement};
 use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure};
 
@@ -28,10 +28,16 @@ pub enum TestResult {
 #[grammar = "grammar.pest"]
 pub struct CScriptTokenPairs;
 
-/// A TestCase consists of an expected_failure (test will not count as failed if it fails), a setup
-/// section which will run before the test, a set of steps which make up a test, and a set of teardown
-/// steps which run after the test. The setup and teardown steps are a vec of TestLine as they cannot
-/// contain subtests, but the main test is a vec of Operation as we can nest a nest inside of a test.
+/// Parse a string with Pest using the Main rule
+pub fn parse_str(input: &str) -> Result<Pairs<Rule>, ChimeraCompileError> {
+    match CScriptTokenPairs::parse(Rule::Main, input) {
+        Ok(parsed) => Ok(parsed),
+        Err(e) => {
+            return Err(handle_ast_err(e))
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct TestCase {
     name: String,
@@ -320,15 +326,6 @@ fn handle_ast_err(e: pest::error::Error<Rule>) -> ChimeraCompileError {
         InputLocation::Span((start, _end)) => start
     };
     ChimeraCompileError::FailedParseAST(format!("Failed to parse ChimeraScript at position {} of line: {}", position, e.line()).to_owned())
-    // match e.variant {
-    //     pest::error::ErrorVariant::ParsingError {
-    //         positives,
-    //         negatives
-    //     } => {
-    //         ChimeraError::FailedParseAST("".to_owned())
-    //     }
-    //     _ => ChimeraError::FailedParseAST("UNHANDLED CUSTOM ERR MSG".to_owned())
-    // }
 }
 
 pub fn iterate_yaml(yaml_doc: Yaml) -> Result<Vec<TestCase>, ChimeraCompileError> {

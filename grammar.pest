@@ -11,21 +11,31 @@ Newline = _{ "\n" | "\r\n" }
 WHITESPACE = _{ " " | "\t" | Newline }
 BlockComment = _{ "/*" ~ (BlockComment | !"*/" ~ ANY)* ~ "*/" }
 COMMENT = _{ ("//" ~ (!Newline ~ ANY)*) | BlockComment }
+EndOf = _{ ";" }
 
-Main = { SOI ~ Statement ~ EOI }
+Main = { SOI ~ Function+ ~ EOI }
 
-Statement = { AssignmentExpr | AssertCommand | PrintCommand | Expression }
+// Function
+Decorators = !{ "[" ~ (StrPlus | DecoratorKeyValuePair) ~ ("," ~ (StrPlus | DecoratorKeyValuePair))* ~ ","? ~ "]" }
+DecoratorKeyValuePair = ${ StrPlus ~ "=" ~ StrPlus }
+Function = ${ Decorators? ~ Newline ~ "case " ~ StrPlus ~ "()" ~ Block }
+Block = !{ "{" ~ (Statement | Function | Teardown)* ~ "}" ~ EndOf? }
+Teardown = { "TEARDOWN" ~ "{" ~ Statement* ~ "}" }
+Statement = { (AssignmentExpr | AssertCommand | PrintCommand | Expression ) ~ EndOf }
 
+// ASSIGNMENT STATEMENT
 AssignmentExpr = { "var" ~ VariableNameAssignment ~ "=" ~ Expression }
 
-Expression = { HttpCommand | "LITERAL" ~ LiteralValue | "LIST" ~ ListExpression }
-
 // ASSERT STATEMENT
-// This looks like `ASSERT EQUALS (my_var.foo) 5 "FailureMessage"`
 AssertCommand = { "ASSERT" ~ Negation? ~ AssertSubCommand ~ Value ~ Value ~ QuoteString? }
 Negation = { "NOT" }
 AssertSubCommand = { "EQUALS" | "GTE" | "GT" | "LTE" | "LT" | "STATUS" | "LENGTH" | "CONTAINS" }
+
+// PRINT STATEMENT
 PrintCommand = { "PRINT" ~ Value }
+
+// EXPRESSION STATEMENT
+Expression = { HttpCommand | "LITERAL" ~ LiteralValue | "LIST" ~ ListExpression }
 
 // HTTP EXPRESSION
 // e.g. PUT /foo?field=5 name="hello" timeout=>60

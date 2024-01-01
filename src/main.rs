@@ -8,15 +8,14 @@ mod testing;
 use err_handle::print_error;
 
 extern crate reqwest;
-extern crate yaml_rust;
 extern crate serde;
 extern crate serde_json;
 use std::fs;
 use std::path::Path;
 use std::sync::OnceLock;
 use clap::Parser;
-use yaml_rust::YamlLoader;
 use crate::frontend::TestCase;
+use crate::abstract_syntax_tree::ChimeraScriptAST;
 
 const FILE_EXTENSION: &'static str = "chs";
 
@@ -70,8 +69,8 @@ fn main() {
 
     // TODO: make a client builder here, configure it, then build the client
     // TODO: I should use a global to store the web client so I can access it from
-    //       anywhere without passing it through a bunch of functions that don't need it
-    //       see what was done a few lines below for the domain
+    //       anywhere without passing it through a bunch of functions that don't need it.
+    //       See what was done a few lines below for the domain.
     //       Will need to figure out if we want the client to be set once here like the domain
     //       or modified later at some point, ex like changing the timeout it uses for a request
     let web_client = reqwest::blocking::Client::new();
@@ -79,6 +78,15 @@ fn main() {
     // TODO: Set this from a config value
     WEB_REQUEST_DOMAIN.set("http://127.0.0.1:5000".to_owned()).expect("Failed to set static global for web domain");
 
+    match ChimeraScriptAST::new(file_contents.as_str()) {
+        Ok(ast) => {
+            // TODO: Need to run the tests here, have to re-write the frontend
+            todo!()
+        },
+        Err(e) => e.print_error()
+    }
+
+    // TODO: Remove everything from here on, fold it into the new match above
     let test_file = YamlLoader::load_from_str(file_contents.as_str());
     match test_file {
         Ok(file_yaml) => {
