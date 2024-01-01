@@ -15,12 +15,13 @@ pub struct ChimeraScriptAST {
 impl ChimeraScriptAST {
     /// Generate an abstract syntax tree from a string of ChimeraScript
     pub fn new(input: &str) -> Result<Self, ChimeraCompileError> {
-        let mut pairs = frontend::parse_str(input)?;
+        let mut pairs = frontend::parse_main(input)?;
         let main_pair = pairs.next().ok_or_else(|| panic!("Did not get any pairs after parsing a string into a Rule::Main but there must be at least one"))?;
         if main_pair.as_rule() != Rule::Main { panic!("Expected the first pair of a parse to be Rule::Main but it was not") };
         let mut function_pairs = main_pair.into_inner();
         let mut functions: Vec<Function> = Vec::new();
         while let Some(function_pair) = function_pairs.next() {
+            if function_pair.as_rule() == Rule::EOI { break; }
             let function = Self::pair_to_function(function_pair)?;
             functions.push(function);
         }
@@ -437,14 +438,38 @@ pub enum BlockContents {
 
 #[derive(Debug)]
 pub struct Teardown {
-    statements: Vec<Statement>
+    pub statements: Vec<Statement>
 }
 
 #[derive(Debug)]
 pub struct Function {
     decorators: Vec<Decorator>,
-    name: String,
-    block: Vec<BlockContents>
+    pub name: String,
+    pub block: Vec<BlockContents>
+}
+
+impl Function {
+    pub fn has_key(&self, checked_key: &str) -> bool {
+        for decorator in &self.decorators {
+            match decorator {
+                Decorator::Key(self_key) => {
+                    if self_key.as_str() == checked_key {
+                        return true
+                    }
+                },
+                _ => continue
+            }
+        }
+        false
+    }
+
+    pub fn is_expected_failure(&self) -> bool {
+        self.has_key("expected-failure")
+    }
+
+    pub fn is_test_function(&self) -> bool {
+        self.has_key("test")
+    }
 }
 
 #[derive(Debug)]
@@ -769,8 +794,6 @@ mod ast_tests {
     use super::*;
 
     // TODO: Add tests here for a test-case functions, decorators, teardown, nested functions
-    // TODO: Add tests for statements being broken up into multiple lines
-    // TODO: Add a test that a statement without an ending ';' fails to parse
 
     fn str_to_statement(input: &str) -> Statement {
         let mut pairs = CScriptTokenPairs::parse(Rule::Statement, input).expect("Failed to parse a ChimeraScript string with Pest.");
@@ -791,6 +814,13 @@ mod ast_tests {
             },
             _ => panic!("An ASSERT statement was not resolved into a Statement::AssertCommand.")
         }
+    }
+
+    #[test]
+    /// Test that a statement can take place over multiple lines
+    fn multiline_statement() {
+        // This test fails if it panics while parsing
+        str_to_statement("ASSERT EQUALS \n\n 1 \n 1;");
     }
 
     #[test]
@@ -879,7 +909,17 @@ mod ast_tests {
         match str_to_statement("var foo = LITERAL 5;") {
             Statement::AssignmentExpr(assignment_expr) => {
                 assert_eq!(assignment_expr.var_name, "foo".to_owned());
-                assert_eq!(assignment_expr.expression, Expression::LiteralExpression(Literal::Number(NumberKind::U64(5))));
+                match assignment_expr.expression {
+                    Expression::LiteralExpression(literal_expression) => {
+                        match literal_expression {
+                            Literal::Number(numberkind) => {
+                                assert_eq!(numberkind, NumberKind::U64(5));
+                            },
+                            _ => panic!("Expected a LITERAL expression for a '5' to resolve as a Literal::Number but it did not")
+                        }
+                    },
+                    _ => panic!("Expected a LITERAL expression to resolve as an Expression::LiteralExpression but it did not")
+                }
             },
             _ => panic!("Statement for an assignment expression did not resolve to the correct variant.")
         }
@@ -1022,5 +1062,14 @@ mod ast_tests {
             str_to_statement("LIST NEW [1,];");
         });
         assert!(failure_res.is_err(), "Expected list creation to fail when the only value passed in was comma separated");
+    }
+
+    #[test]
+    /// Test that a statement without an EndOf fails to parse
+    fn no_end_of_statement() {
+        let failure_res = std::panic::catch_unwind(|| {
+            str_to_statement("ASSERT EQUALS 1 1")
+        });
+        assert!(failure_res.is_err(), "Expected a statement with no EndOf to fail to parse");
     }
 }

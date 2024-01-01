@@ -10,29 +10,14 @@
       - Ex, test has a line to make a request to `http://localhost:5000/some_endpoint` with query and body
         params. The harness can intercept this request and just return what the web service is expected
         to return from the request to the test
-  - Setup
   - Teardown
     - Teardown running when the test fails
-  - Basic functionality
-    - Variable access
-      - Trying to access a list with a non int index
-    - Standalone expression
-      - Literal (no-op?)
-      - HttpWeb
 - Ability to send Http requests to full paths so requests can go to endpoints
   other than just the one specified in config
 - Support for running a test by name
   - Accessed with args.name in main.rs
 - Test tagging?
 - Script documentation
-- Finish implementing comments
-  - Comments do not work if they take up an entire line
-  - This is due to both the parsing spitting out 0 tokens and the
-    YAML handling not returning an expected Array object
-  - Might have to get rid of the YAML structure and make the entire file just
-    the script to make this work? That is going to be a huge refactor,
-    but doesn't need to affect most of the internals (everything including
-    and after the AST)
 - Add JSON support
   - Ex, `var foo = LITERAL JSON {"test":5};`
   - Allow this to be multiline

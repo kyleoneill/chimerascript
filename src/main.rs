@@ -14,7 +14,6 @@ use std::fs;
 use std::path::Path;
 use std::sync::OnceLock;
 use clap::Parser;
-use crate::frontend::TestCase;
 use crate::abstract_syntax_tree::ChimeraScriptAST;
 
 const FILE_EXTENSION: &'static str = "chs";
@@ -80,39 +79,10 @@ fn main() {
 
     match ChimeraScriptAST::new(file_contents.as_str()) {
         Ok(ast) => {
-            // TODO: Need to run the tests here, have to re-write the frontend
-            todo!()
+            let (passed, failed, errored) = frontend::run_functions(ast, &web_client);
+            let overall_result = if failed == 0 && errored == 0 {"PASSED"} else {"FAILED"};
+            println!("TEST {} WITH {} SUCCESSES, {} FAILURES, AND {} ERRORS", overall_result, passed, failed, errored);
         },
         Err(e) => e.print_error()
-    }
-
-    // TODO: Remove everything from here on, fold it into the new match above
-    let test_file = YamlLoader::load_from_str(file_contents.as_str());
-    match test_file {
-        Ok(file_yaml) => {
-            println!("RUNNING TESTS");
-            let mut tests_passed = 0;
-            let mut tests_failed = 0;
-            let mut tests_errored = 0;
-            for yaml in file_yaml {
-                match frontend::iterate_yaml(yaml) {
-                    Ok(tests) => {
-                        let res = TestCase::run_outermost_test_case(tests, &web_client);
-                        tests_passed += res.0;
-                        tests_failed += res.1;
-                    }
-                    Err(err) => {
-                        tests_errored += 1;
-                        err.print_error();
-                    }
-                }
-            }
-            let overall_result = if tests_failed == 0 && tests_errored == 0 {"PASSED"} else {"FAILED"};
-            println!("TEST {} WITH {} SUCCESSES, {} FAILURES, AND {} ERRORS", overall_result, tests_passed, tests_failed, tests_errored);
-        },
-        Err(e) => {
-            let marker = e.marker();
-            print_error(&format!("Failed to parse {} at line {} col {} with error '{}'", &args.path, marker.line(), marker.col(), e.to_string()));
-        }
     }
 }

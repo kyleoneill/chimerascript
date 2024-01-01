@@ -18,8 +18,8 @@ Main = { SOI ~ Function+ ~ EOI }
 // Function
 Decorators = !{ "[" ~ (StrPlus | DecoratorKeyValuePair) ~ ("," ~ (StrPlus | DecoratorKeyValuePair))* ~ ","? ~ "]" }
 DecoratorKeyValuePair = ${ StrPlus ~ "=" ~ StrPlus }
-Function = ${ Decorators? ~ Newline ~ "case " ~ StrPlus ~ "()" ~ Block }
-Block = !{ "{" ~ (Statement | Function | Teardown)* ~ "}" ~ EndOf? }
+Function = ${ (Decorators ~ Newline)? ~ "case " ~ StrPlus ~ "()" ~ Block }
+Block = !{ WHITESPACE ~ "{" ~ (Statement | Function | Teardown)* ~ "}" ~ EndOf? }
 Teardown = { "TEARDOWN" ~ "{" ~ Statement* ~ "}" }
 Statement = { (AssignmentExpr | AssertCommand | PrintCommand | Expression ) ~ EndOf }
 
