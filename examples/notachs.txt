@@ -1,3 +1,0 @@
-- case: valid-yaml
-  steps:
-    - PRINT "I should fail anyway"
