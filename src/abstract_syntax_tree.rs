@@ -2,10 +2,17 @@ use std::collections::HashMap;
 use std::fmt::Formatter;
 use pest::iterators::Pair;
 use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure, VarTypes};
-use crate::err_handle::ChimeraCompileError::FailedParseAST;
 use crate::frontend::{Rule, Context};
 use crate::literal::{Literal, NumberKind};
 use crate::{frontend, WEB_REQUEST_DOMAIN};
+
+// This has a return value despite only panicking so satisfy the compiler, as it's called inside of
+// `ok_or_else(|| no_pairs_panic())` closures which are meant to transform an Option into a Result.
+// They are being used to get a value out of an Option and panic if it's a None, but the closure needs to return
+// an Err() in order for the compiler to allow the `ok_or_else()` to be question marked
+fn no_pairs_panic(rule_name: &str) -> ChimeraCompileError {
+    panic!("Ran out of mandatory inner pairs when parsing a Rule::{}", rule_name)
+}
 
 #[derive(Debug)]
 pub struct ChimeraScriptAST {
@@ -74,7 +81,7 @@ impl ChimeraScriptAST {
     }
 
     fn pair_to_teardown(teardown_pair: Pair<Rule>) -> Result<Teardown, ChimeraCompileError> {
-        if teardown_pair.as_rule() != Rule::Teardown { return Err(FailedParseAST("Got invalid data when reading a teardown block".to_owned())) };
+        if teardown_pair.as_rule() != Rule::Teardown { return Err(ChimeraCompileError::new("Got invalid data when reading a teardown block", teardown_pair.line_col())) };
         let mut statements: Vec<Statement> = Vec::new();
         let mut teardown_inner = teardown_pair.into_inner();
         while let Some(teardown_statement) = teardown_inner.next() {
@@ -84,7 +91,7 @@ impl ChimeraScriptAST {
     }
 
     fn pair_to_statement(statement_pair: Pair<Rule>) -> Result<Statement, ChimeraCompileError> {
-        if statement_pair.as_rule() != Rule::Statement { return Err(FailedParseAST("Got invalid data when reading a statement".to_owned())) };
+        if statement_pair.as_rule() != Rule::Statement { return Err(ChimeraCompileError::new("Got invalid data when reading a statement", statement_pair.line_col())) };
         let statement_inner = statement_pair.into_inner().next().expect("A Rule::Statement inner must always have one inner pair");
         // TODO: Break these up into their own individual "pair_to_x" functions. Clean up how they're written
         match statement_inner.as_rule() {
@@ -99,9 +106,10 @@ impl ChimeraScriptAST {
 
                 // Peek ahead to see if our inner contains an optional Negation
                 let negate_assertion = match pairs.peek() {
-                    Some(next) => if next.as_rule() == Rule::Negation {Ok(true)} else {Ok(false)},
-                    None => Err(FailedParseAST("Rule::AssertCommand contained no inner values".to_owned()))
-                }?;
+                    Some(next) => if next.as_rule() == Rule::Negation { true } else { false },
+                    None => panic!("Expected a Rule::AssertCommand to contain inner pairs but it did not")
+                };
+
                 // peek() does not move the iterator position, so if we did have a negation then we
                 // need to move the iterator ahead by one position
                 if negate_assertion {
@@ -109,9 +117,9 @@ impl ChimeraScriptAST {
                 }
 
                 // Get the sub-command
-                let next_subcommand = pairs.next().ok_or_else(|| FailedParseAST("ran out of tokens when getting assertion subcommand".to_owned()))?;
-                if next_subcommand.as_rule() != Rule::AssertSubCommand {return Err(FailedParseAST("Rule::AssertCommand inner tokens missing a Rule::AssertSubcommand".to_owned()))}
-                let subcommand = match next_subcommand.as_span().as_str() {
+                let subcommand_pair = pairs.next().ok_or_else(|| no_pairs_panic("AssertCommand subcommand"))?;
+                if subcommand_pair.as_rule() != Rule::AssertSubCommand {return Err(ChimeraCompileError::new("Got invalid data when reading an assertion subcommand", subcommand_pair.line_col()))}
+                let subcommand = match subcommand_pair.as_span().as_str() {
                     "EQUALS" => AssertSubCommand::EQUALS,
                     "GTE" => AssertSubCommand::GTE,
                     "GT" => AssertSubCommand::GT,
@@ -120,25 +128,20 @@ impl ChimeraScriptAST {
                     "STATUS" => AssertSubCommand::STATUS,
                     "LENGTH" => AssertSubCommand::LENGTH,
                     "CONTAINS" => AssertSubCommand::CONTAINS,
-                    _ => return Err(FailedParseAST("Rule::AssertSubcommand contained an invalid value".to_owned()))
+                    _ => return Err(ChimeraCompileError::new("Got an invalid assertion subcommand value", subcommand_pair.line_col()))
                 };
 
                 // Get the first value we're asserting with
-                let next_value = pairs.next().ok_or_else(|| FailedParseAST("ran out of tokens when getting first assertion Value".to_owned()))?;
-                if next_value.as_rule() != Rule::Value {return Err(FailedParseAST("Rule::AssertCommand inner tokens missing a Rule::Value".to_owned()))};
-                let left_value = ChimeraScriptAST::parse_rule_to_value(next_value)?;
+                let left_value_pair = pairs.next().ok_or_else(|| no_pairs_panic("AssertCommand's first value param"))?;
+                let left_value = ChimeraScriptAST::parse_rule_to_value(left_value_pair)?;
 
                 // Get the second value we're asserting with
-                let next_second_value = pairs.next().ok_or_else(|| FailedParseAST("ran out of tokens when getting second assertion Value".to_owned()))?;
-                if next_second_value.as_rule() != Rule::Value {return Err(FailedParseAST("Rule::AssertCommand inner tokens missing a Rule::Value".to_owned()))};
-                let right_value = ChimeraScriptAST::parse_rule_to_value(next_second_value)?;
+                let right_value_pair = pairs.next().ok_or_else(|| no_pairs_panic("AssertCommand's second value param"))?;
+                let right_value = ChimeraScriptAST::parse_rule_to_value(right_value_pair)?;
 
                 // Check for an optional QuoteString which represents an assertion failure message
                 let error_message = match pairs.peek() {
-                    Some(next) => {
-                        if next.as_rule() != Rule::QuoteString {return Err(FailedParseAST("expected to be given a Rule::QuoteString token meant to be used as an assertion error message but got the wrong rule type".to_owned()))}
-                        Some(next.as_str().to_owned())
-                    }
+                    Some(next) => Some(ChimeraScriptAST::parse_quotestring_rule(next)?),
                     None => None
                 };
 
@@ -156,13 +159,12 @@ impl ChimeraScriptAST {
                 // 2. An expression
                 let mut pairs = statement_inner.into_inner();
 
-                let next_str = pairs.next().ok_or_else(|| return FailedParseAST("ran out of tokens when getting variable name of an AssignmentExpr".to_owned()))?;
-                if next_str.as_rule() != Rule::VariableNameAssignment {return Err(FailedParseAST("Rule::AssignmentExpr did not contain a Rule::VariableNameAssignment to use as a variable name".to_owned()))}
-                let var_name = next_str.as_str().to_owned();
+                let var_name_pair = pairs.next().ok_or_else(|| no_pairs_panic("AssignmentExpr's variable name"))?;
+                if var_name_pair.as_rule() != Rule::VariableNameAssignment {return Err(ChimeraCompileError::new("Expected data to be a valid variable name", var_name_pair.line_col()))}
+                let var_name = var_name_pair.as_str().to_owned();
 
-                let next_expr = pairs.next().ok_or_else(|| return FailedParseAST("ran out of tokens when getting expression out of an AssignmentExpr".to_owned()))?;
-                if next_expr.as_rule() != Rule::Expression {return Err(FailedParseAST("Rule::AssignmentExpr did not contain a Rule::Expression inner".to_owned()))}
-                let expression = ChimeraScriptAST::parse_rule_to_expression(next_expr)?;
+                let expression_pair = pairs.next().ok_or_else(|| no_pairs_panic("AssignmentExpr's expression"))?;
+                let expression = ChimeraScriptAST::parse_rule_to_expression(expression_pair)?;
                 Ok(Statement::AssignmentExpr(AssignmentExpr {
                     var_name,
                     expression
@@ -172,82 +174,82 @@ impl ChimeraScriptAST {
                 // A PrintCommand is going to contain
                 // 1. A value to print
                 let mut pairs = statement_inner.into_inner();
-
-                let next_value = pairs.next().ok_or_else(|| return FailedParseAST("ran out of tokens when getting a value out of a PrintCommand".to_owned()))?;
-                let next_value = ChimeraScriptAST::parse_rule_to_value(next_value)?;
-                Ok(Statement::PrintCommand(next_value))
+                let value_pair = pairs.next().ok_or_else(|| no_pairs_panic("PrintCommand's value"))?;
+                let value = ChimeraScriptAST::parse_rule_to_value(value_pair)?;
+                Ok(Statement::PrintCommand(value))
             },
             Rule::Expression => {
-                // Moved to shared method as AssignmentExpr also needs to construct an Expression
                 let expression = ChimeraScriptAST::parse_rule_to_expression(statement_inner)?;
                 Ok(Statement::Expression(expression))
             },
-            _ => { Err(FailedParseAST("got an invalid Rule variant while constructing a Statement".to_owned())) }
+            _ => { Err(ChimeraCompileError::new("Did not get a valid statement", statement_inner.line_col())) }
         }
     }
 
     fn parse_rule_to_variable_name(pair: Pair<Rule>) -> Result<String, ChimeraCompileError> {
-        if pair.as_rule() != Rule::VariableValue {return Err(FailedParseAST("Expected a VariableValue but got a different rule".to_owned()))}
+        if pair.as_rule() != Rule::VariableValue {return Err(ChimeraCompileError::new("Did not get a valid variable value", pair.line_col()))}
         let inner = pair.into_inner().next().expect("A VariableValue must always have a NestedVariable inner");
         Ok(inner.as_str().to_owned())
     }
 
     fn parse_rule_to_value(pair: Pair<Rule>) -> Result<Value, ChimeraCompileError> {
-        if pair.as_rule() != Rule::Value {return Err(FailedParseAST("expected a Rule::Value but got a different Rule variant".to_owned()))};
-        let inner = pair.into_inner().peek().ok_or_else(|| return FailedParseAST("Rule::Value did not contain an inner".to_owned()))?;
+        if pair.as_rule() != Rule::Value {return Err(ChimeraCompileError::new("Did not get a valid value", pair.line_col()))};
+        let inner = pair.into_inner().peek().ok_or_else(|| no_pairs_panic("Value"))?;
         return match inner.as_rule() {
             Rule::LiteralValue => Ok(Value::Literal(ChimeraScriptAST::parse_rule_to_literal_value(inner)?)),
             Rule::VariableValue => Ok(Value::Variable(ChimeraScriptAST::parse_rule_to_variable_name(inner)?)),
-            _ => { Err(FailedParseAST("got an invalid Rule variant while parsing the inner of a Rule::Value".to_owned()))}
+            _ => { Err(ChimeraCompileError::new("Did not get a valid Value", inner.line_col()))}
         }
     }
 
+    fn parse_quotestring_rule(pair: Pair<Rule>) -> Result<String, ChimeraCompileError> {
+        if pair.as_rule() != Rule::QuoteString { return Err(ChimeraCompileError::new("Expected data to be a quoted string", pair.line_col())) }
+        Ok(pair.into_inner().next().expect("A Rule::QuoteString must contain an inner value but it didn't").as_str().to_owned())
+    }
+
     fn parse_rule_to_literal_value(pair: Pair<Rule>) -> Result<Literal, ChimeraCompileError> {
-        if pair.as_rule() != Rule::LiteralValue { return Err(FailedParseAST("Expected a Rule::LiteralValue but got a different Rule variant".to_owned())) }
-        let literal_value = pair.into_inner().peek().ok_or_else(|| return FailedParseAST("Rule::LiteralValue did not contain an inner token when it should have".to_owned()))?;
+        if pair.as_rule() != Rule::LiteralValue { return Err(ChimeraCompileError::new("Did not get a valid literal", pair.line_col())) }
+        let literal_value = pair.into_inner().peek().ok_or_else(|| no_pairs_panic("LiteralValue"))?;
         match literal_value.as_rule() {
-            Rule::QuoteString => {
-                let string_without_quotes = literal_value.into_inner().peek().ok_or_else(|| return FailedParseAST("Rule::QuoteString did not contain an inner when it should have".to_owned()))?;
-                Ok(Literal::String(string_without_quotes.as_str().to_owned()))
-            },
+            Rule::QuoteString => Ok(Literal::String(ChimeraScriptAST::parse_quotestring_rule(literal_value)?)),
             Rule::Number => {
-                let number_kind = literal_value.into_inner().peek().ok_or_else(|| return FailedParseAST("Rule::Number did not contain an inner when it should have".to_owned()))?;
+                let number_kind = literal_value.into_inner().peek().ok_or_else(|| no_pairs_panic("Number"))?;
                 match number_kind.as_rule() {
                     Rule::Float => {
                         match number_kind.as_str().parse::<f64>() {
                             Ok(as_float) => Ok(Literal::Number(NumberKind::F64(as_float))),
-                            Err(_) => return Err(FailedParseAST("Failed to parse a Rule::Float into an f64".to_owned()))
+                            Err(_) => return Err(ChimeraCompileError::new("Failed to parse a float", number_kind.line_col()))
                         }
                     },
                     Rule::SignedNumber => {
                         match number_kind.as_str().parse::<i64>() {
                             Ok(as_signed) => Ok(Literal::Number(NumberKind::I64(as_signed))),
-                            Err(_) => return Err(FailedParseAST("Failed to parse a Rule::SignedNumber into an i64".to_owned()))
+                            Err(_) => return Err(ChimeraCompileError::new("Failed to parse a signed number", number_kind.line_col()))
                         }
                     },
                     Rule::UnsignedNumber => {
                         match number_kind.as_str().parse::<u64>() {
                             Ok(as_unsigned) => Ok(Literal::Number(NumberKind::U64(as_unsigned))),
-                            Err(_) => return Err(FailedParseAST("Failed to parse a Rule::UnsignedNumber into a u64".to_owned()))
+                            Err(_) => return Err(ChimeraCompileError::new("Failed to parse an unsigned number", number_kind.line_col()))
                         }
                     },
-                    _ => Err(FailedParseAST("Got an invalid rule when unwrapping a Rule::Number".to_owned()))
+                    _ => Err(ChimeraCompileError::new("Did not get a valid number", number_kind.line_col()))
                 }
             },
             Rule::Boolean => {
                 match literal_value.as_str() {
                     "true" | "True" => Ok(Literal::Bool(true)),
                     "false" | "False" => Ok(Literal::Bool(false)),
-                    _ => return Err(FailedParseAST("Got an invalid value when parsing a Rule::Boolean".to_owned()))
+                    _ => return Err(ChimeraCompileError::new("Did not get a valid boolean", literal_value.line_col()))
                 }
             },
             Rule::Null => Ok(Literal::Null),
-            _ => Err(FailedParseAST("Got an invalid rule when unwrapping a Rule::LiteralValue".to_owned()))
+            _ => Err(ChimeraCompileError::new("Did not get a valid literal", literal_value.line_col()))
         }
     }
 
     fn parse_rule_to_path(pair: Pair<Rule>) -> Result<Vec<Value>, ChimeraCompileError> {
-        if pair.as_rule() != Rule::Path {return Err(FailedParseAST("expected to get a Rule::Path token while parsing a Rule::HttpCommand but did not get one".to_owned()))}
+        if pair.as_rule() != Rule::Path {return Err(ChimeraCompileError::new("Did not get a valid path", pair.line_col()))}
         let mut path_inner = pair.into_inner();
         let mut build_path: Vec<Value> = Vec::new();
         let mut buffer: String = String::new();
@@ -257,7 +259,7 @@ impl ChimeraScriptAST {
                     buffer.push('/');
                     let mut endpoint_portion = token.into_inner();
                     while let Some(pair) = endpoint_portion.next() {
-                        let kind = pair.into_inner().next().ok_or_else(|| return FailedParseAST("Rule::VariableOrStr should always contain an inner".to_owned()))?;
+                        let kind = pair.into_inner().next().ok_or_else(|| no_pairs_panic("PathEndpoint"))?;
                         match kind.as_rule() {
                             Rule::StrPlus => buffer.push_str(kind.as_str()),
                             Rule::VariableValue => {
@@ -266,7 +268,7 @@ impl ChimeraScriptAST {
                                 let var_name = ChimeraScriptAST::parse_rule_to_variable_name(kind)?;
                                 build_path.push(Value::Variable(var_name));
                             },
-                            _ => return Err(FailedParseAST("Got a rule that should not be possible while parsing a Rule::VariableOrStr".to_owned()))
+                            _ => return Err(ChimeraCompileError::new("Did not get a valid path endpoint", kind.line_col()))
                         }
                     }
                 },
@@ -279,7 +281,7 @@ impl ChimeraScriptAST {
                     //       Probably should just follow the route I went with the path and use a Vec of Value
                     build_path.push(Value::Literal(Literal::String(token.as_str().to_owned())));
                 },
-                _ => return Err(FailedParseAST("Got an invalid rule when parsing a path".to_owned()))
+                _ => return Err(ChimeraCompileError::new("Did not get a valid path", token.line_col()))
             }
         }
         // check if the buffer is empty, add it if it is
@@ -298,26 +300,26 @@ impl ChimeraScriptAST {
         //   3. Optional list of HttpAssignment, which look like `field="value"`
         //   4. Optional list of KeyValuePair, which look like `timeout=>60`
         // c. A LIST expression
-        if pair.as_rule() != Rule::Expression {return Err(FailedParseAST("tried to parse a non-Expression rule as an Expression".to_owned()))}
+        if pair.as_rule() != Rule::Expression {return Err(ChimeraCompileError::new("Did not get a valid expression", pair.line_col()))}
         let mut expression_pairs = pair.into_inner();
 
-        let first_token = expression_pairs.next().ok_or_else(|| return FailedParseAST("did not get any tokens inside a Rule::Expression".to_owned()))?;
+        let first_token = expression_pairs.next().ok_or_else(|| no_pairs_panic("Expression"))?;
         match first_token.as_rule() {
             Rule::LiteralValue => Ok(Expression::LiteralExpression(ChimeraScriptAST::parse_rule_to_literal_value(first_token)?)),
             Rule::HttpCommand => {
                 let mut http_pairs = first_token.into_inner();
 
-                let verb_token = http_pairs.next().ok_or_else(|| return FailedParseAST("did not get any tokens inside a Rule::HttpCommand".to_owned()))?;
-                if verb_token.as_rule() != Rule::HTTPVerb {return Err(FailedParseAST("Rule::HttpCommand did not contain a Rule::HttpVerb".to_owned()))}
+                let verb_token = http_pairs.next().ok_or_else(|| no_pairs_panic("HttpCommand"))?;
+                if verb_token.as_rule() != Rule::HTTPVerb {return Err(ChimeraCompileError::new("Did not get a valid HTTP verb", verb_token.line_col()))}
                 let verb = match verb_token.as_str() {
                     "GET" => HTTPVerb::GET,
                     "PUT" => HTTPVerb::PUT,
                     "POST" => HTTPVerb::POST,
                     "DELETE" => HTTPVerb::DELETE,
-                    _ => return Err(FailedParseAST("got an invalid value for an Http verb while parsing an expression".to_owned()))
+                    _ => return Err(ChimeraCompileError::new("Did not get a valid HTTP verb", verb_token.line_col()))
                 };
 
-                let path_token = http_pairs.next().ok_or_else(|| return FailedParseAST("ran out of tokens when getting a Rule::Path for a Rule::HttpCommand".to_string()))?;
+                let path_token = http_pairs.next().ok_or_else(|| no_pairs_panic("HttpCommand"))?;
                 let path = ChimeraScriptAST::parse_rule_to_path(path_token)?;
 
                 // Peek ahead and iterate over the next pairs to get all of the HttpAssignment ones
@@ -325,11 +327,11 @@ impl ChimeraScriptAST {
                 while http_pairs.peek().is_some() && http_pairs.peek().unwrap().as_rule() == Rule::HttpAssignment {
                     let mut http_assignment_pairs = http_pairs.next().unwrap().into_inner();
 
-                    let assignment_token = http_assignment_pairs.next().ok_or_else(|| return FailedParseAST("failed to get another token when looking for a VariableNameAssignment when parsing an HttpAssignment".to_owned()))?;
-                    if assignment_token.as_rule() != Rule::VariableNameAssignment {return Err(FailedParseAST("failed to get a VariableNameAssignment when parsing an HttpAssignment".to_owned()))}
+                    let assignment_token = http_assignment_pairs.next().ok_or_else(|| no_pairs_panic("HttpAssignment"))?;
+                    if assignment_token.as_rule() != Rule::VariableNameAssignment {return Err(ChimeraCompileError::new("Did not get a valid variable name for an http key value pair", assignment_token.line_col()))}
                     let lhs = assignment_token.as_str().to_owned();
 
-                    let value_token = http_assignment_pairs.next().ok_or_else(|| return FailedParseAST("failed to get a Value token while parsing an HttpAssignment".to_owned()))?;
+                    let value_token = http_assignment_pairs.next().ok_or_else(|| no_pairs_panic("HttpAssignment"))?;
                     let rhs = ChimeraScriptAST::parse_rule_to_value(value_token)?;
 
                     let http_assignment = HttpAssignment {
@@ -344,11 +346,11 @@ impl ChimeraScriptAST {
                 while http_pairs.peek().is_some() && http_pairs.peek().unwrap().as_rule() == Rule::KeyValuePair {
                     let mut key_value_pairs = http_pairs.next().unwrap().into_inner();
 
-                    let assignment_token = key_value_pairs.next().ok_or_else(|| return FailedParseAST("failed to get another token when looking for a VariableNameAssignment when parsing a KeyValuePair".to_owned()))?;
-                    if assignment_token.as_rule() != Rule::VariableNameAssignment {return Err(FailedParseAST("failed to get a VariableNameAssignment when parsing a KeyValuePair".to_owned()))}
+                    let assignment_token = key_value_pairs.next().ok_or_else(|| no_pairs_panic("KeyValuePair"))?;
+                    if assignment_token.as_rule() != Rule::VariableNameAssignment {return Err(ChimeraCompileError::new("Did not get a valid key for a key value pair", assignment_token.line_col()))}
                     let key = assignment_token.as_str().to_owned();
 
-                    let value_token = key_value_pairs.next().ok_or_else(|| return FailedParseAST("failed to get a Value token while parsing a KeyValuePair".to_owned()))?;
+                    let value_token = key_value_pairs.next().ok_or_else(|| no_pairs_panic("KeyValuePair"))?;
                     let value = ChimeraScriptAST::parse_rule_to_value(value_token)?;
 
                     let key_value = KeyValuePair {
@@ -366,7 +368,7 @@ impl ChimeraScriptAST {
             },
             Rule::ListExpression => {
                 let mut list_paris = first_token.into_inner();
-                let list_expression_kind_token = list_paris.next().ok_or_else(|| return FailedParseAST("Did not get any tokens inside a ListExpression".to_owned()))?;
+                let list_expression_kind_token = list_paris.next().ok_or_else(|| no_pairs_panic("ListExpression"))?;
                 match list_expression_kind_token.as_rule() {
                     Rule::ListNew => {
                         let mut list_new_pairs = list_expression_kind_token.into_inner();
@@ -377,10 +379,10 @@ impl ChimeraScriptAST {
                                 // A ListNew contains zero or more CommaSeparatedValues, read them all
                                 while list_value_token.as_rule() == Rule::CommaSeparatedValues {
                                     let mut inner = list_value_token.into_inner();
-                                    let literal_token = inner.next().ok_or_else(|| return FailedParseAST("Did not get an inner token when parsing a CommaSeparatedValues, which should always contain a Literal".to_owned()))?;
+                                    let literal_token = inner.next().ok_or_else(|| no_pairs_panic("CommaSeparatedValues"))?;
                                     let value = ChimeraScriptAST::parse_rule_to_value(literal_token)?;
                                     list_values.push(value);
-                                    list_value_token = list_new_pairs.next().ok_or_else(|| return FailedParseAST("Ran out of tokens when parsing CommaSeparatedValues. This token stream should always end with a Literal".to_owned()))?;
+                                    list_value_token = list_new_pairs.next().ok_or_else(|| no_pairs_panic("CommaSeparatedValues"))?;
                                 }
                                 // After all CommaSeparatedValues are read the final pair is going to be a Value
                                 let value = ChimeraScriptAST::parse_rule_to_value(list_value_token)?;
@@ -393,8 +395,8 @@ impl ChimeraScriptAST {
                     Rule::ListCommandExpr => {
                         let mut list_command_expr_tokens = list_expression_kind_token.into_inner();
                         // Save the op pair to parse last as it might depend on the third token to set its value
-                        let command_token = list_command_expr_tokens.next().ok_or_else(|| return FailedParseAST("Ran out of tokens when parsing ListCommandExpr to get a ListCommand".to_owned()))?;
-                        let variable_name_token = list_command_expr_tokens.next().ok_or_else(|| return FailedParseAST("Ran out of tokens when parsing ListCommandExpr to get a VariableValue".to_owned()))?;
+                        let command_token = list_command_expr_tokens.next().ok_or_else(|| no_pairs_panic("ListCommandExpr command"))?;
+                        let variable_name_token = list_command_expr_tokens.next().ok_or_else(|| no_pairs_panic("ListCommandExpr variable name"))?;
                         let list_name = ChimeraScriptAST::parse_rule_to_variable_name(variable_name_token)?;
                         let operation = match list_command_expr_tokens.next() {
                             Some(value_token) => {
@@ -402,23 +404,26 @@ impl ChimeraScriptAST {
                                 match command_token.as_str() {
                                     "APPEND" => ListCommandOperations::MutateOperations(MutateListOperations::Append(value)),
                                     "REMOVE" => ListCommandOperations::MutateOperations(MutateListOperations::Remove(value)),
-                                    _ => return Err(FailedParseAST("Got an invalid list command while parsing a ListCommandExpr with an additional argument".to_owned()))
+                                    // TODO: I think the compile error here and the one in the below None block (and in number processing)
+                                    //       are the only ones that a user can ever _actually_ reach, might want to replace the rest of
+                                    //       the ChimeraCompileError's in this file with panics
+                                    _ => return Err(ChimeraCompileError::new("Invalid list command when using a value", command_token.line_col()))
                                 }
                             },
                             None => {
                                 match command_token.as_str() {
                                     "LENGTH" => ListCommandOperations::Length,
                                     "POP" => ListCommandOperations::MutateOperations(MutateListOperations::Pop),
-                                    _ => return Err(FailedParseAST("Got an invalid list command while parsing a ListCommandExpr".to_owned()))
+                                    _ => return Err(ChimeraCompileError::new("Invalid list command when not using a value", command_token.line_col()))
                                 }
                             }
                         };
                         Ok(Expression::ListExpression(ListExpression::ListArgument(ListCommand { list_name, operation })))
                     },
-                    _ => { return Err(FailedParseAST("ListExpression contained an invalid inner rule".to_owned())) }
+                    _ => { return Err(ChimeraCompileError::new("Did not get a valid list expression", list_expression_kind_token.line_col())) }
                 }
             },
-            _ => { return Err(FailedParseAST("Expression contained an invalid inner rule".to_owned())) }
+            _ => { return Err(ChimeraCompileError::new("Did not get a valid expression", first_token.line_col())) }
         }
     }
 }
@@ -845,7 +850,7 @@ mod ast_tests {
                 assert_eq!(assert_command.left_value, Value::Literal(Literal::Number(NumberKind::U64(1))), "Assertion with a numerical literal should have a Value::Literal(Literal::Int()) value.");
                 assert_eq!(assert_command.right_value, Value::Literal(Literal::Number(NumberKind::U64(2))));
                 assert!(assert_command.error_message.is_some(), "Assertion error_message should be Some() when message is specified.");
-                assert_eq!(assert_command.error_message.unwrap(), "\"foo\"".to_owned(), "Assertion error message was not equal to the supplied message");
+                assert_eq!(assert_command.error_message.unwrap(), "foo".to_owned(), "Assertion error message was not equal to the supplied message");
             },
             _ => panic!("An ASSERT statement was not resolved into a Statement::AssertCommand")
         }
