@@ -1,17 +1,19 @@
 use std::fmt::{Display, Formatter};
 
-// TODO: This should no longer be an enum, it's only one variant
 #[derive(Debug)]
-pub enum ChimeraCompileError {
-    FailedParseAST(String)
+pub struct ChimeraCompileError {
+    error_msg: String,
+    line: usize,
+    column: usize
 }
 
 impl ChimeraCompileError {
+    pub fn new(error_str: &str, line_col: (usize, usize)) -> Self {
+        ChimeraCompileError { error_msg: error_str.to_owned(), line: line_col.0, column: line_col.1 }
+    }
+
     pub fn print_error(&self) {
-        eprint!("ERROR: ");
-        match self {
-            ChimeraCompileError::FailedParseAST(msg) => eprintln!("Failed to parse tokens into AST, {}", msg)
-        }
+        eprintln!("ERROR: {} on line {} column {}", self.error_msg, self.line, self.column);
     }
 }
 

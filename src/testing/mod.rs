@@ -15,7 +15,8 @@ mod testing {
     // TODO: Tests currently rely on there being a local server running which requests are made
     //       against. Would be a lot better to have some sort of test harness which "captured"
     //       the requests being made and providing the expected response, so the use of a server
-    //       is avoided. Maybe using a mock Client for tests?
+    //       is avoided. The Client being passed in should be mocked so real http requests are not
+    //       made when running tests
 
     // TODO: The Return value from tests should be changed. Would be better to return some sort of
     //       Vec of TestResult which has a test name, if it passed or failed, and sub-test results.
@@ -52,6 +53,16 @@ mod testing {
 
     // TODO: Add tests here for a test-case functions, decorators, teardown, nested functions
     // TODO: Add tests for statements being broken up into multiple lines
+
+    #[test]
+    /// Test that a file with invalid ChimeraScript does not compile
+    fn invalid_file() {
+        let file_contents = fs::read_to_string(Path::new("./src/testing/chs_files/invalid_file.chs")).expect("Failed to read chs file when setting up test");
+        match ChimeraScriptAST::new(file_contents.as_str()) {
+            Ok(_) => panic!("Trying to parse an invalid ChimeraScript file should result in a compile error"),
+            Err(_e) => ()
+        }
+    }
 
     #[test]
     /// Test the simplest possible .ch, an assertion that 1 == 1

@@ -32,8 +32,10 @@
 
 - Lexing?
   - Pest rule pairs contain metadata about the matched token, like the
-    start and stop position in the string where it matched from. Should
-    this information be stored? Is there error-handling/debugging use for it?
+    start and stop position in the string where it matched from. This is
+    used during construction of the AST but is not used for runtime errors.
+    It should be incorporated for runtime errors too so those errors can
+    have more precise and helpful error messaging
 - Refactor AST file
   - Break up large functions into more `parse_rule_to_x` functions
   - Rename variables that don't really describe the rule pairs correctly

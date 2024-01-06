@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::fmt::Display;
-use pest::error::InputLocation;
 use pest::iterators::Pairs;
 use pest::Parser;
 use pest_derive::Parser;
@@ -168,10 +167,9 @@ pub fn run_test_function(function: Function, variable_map: &mut HashMap<String, 
 }
 
 fn handle_ast_err(e: pest::error::Error<Rule>) -> ChimeraCompileError {
-    // TODO: Fix this now that actual language parsing is implemented
-    let position = match e.location {
-        InputLocation::Pos(pos) => pos,
-        InputLocation::Span((start, _end)) => start
+    let line_col = match e.line_col {
+        pest::error::LineColLocation::Pos(pos) => pos,
+        pest::error::LineColLocation::Span(start, _end) => start
     };
-    ChimeraCompileError::FailedParseAST(format!("Failed to parse ChimeraScript at position {} of line: {}", position, e.line()).to_owned())
+    ChimeraCompileError::new("Failed to parse ChimeraScript", line_col)
 }
