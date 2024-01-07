@@ -6,6 +6,7 @@ use pest::Parser;
 use pest_derive::Parser;
 use crate::abstract_syntax_tree::{AssignmentValue, ChimeraScriptAST, Statement, Function, BlockContents};
 use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure};
+use crate::util::Timer;
 
 pub struct Context {
     pub current_line: i32
@@ -50,8 +51,7 @@ pub struct ResultCount {
 
 impl Display for ResultCount {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let overall_result = if self.failure == 0 && self.error == 0 {"PASSED"} else {"FAILED"};
-        write!(f, "Ran {} tests with {} successes, {} failures, and {} errors\n\n{}", self.total_tests, self.success, self.failure, self.error, overall_result)
+        write!(f, "Ran {} tests with {} successes, {} failures, and {} errors\n\n{}", self.total_tests, self.success, self.failure, self.error, self.overall_result())
     }
 }
 
@@ -62,9 +62,20 @@ impl ResultCount {
     pub fn new(input: (usize, usize, usize, usize)) -> Self {
         Self { success: input.0, failure: input.1, error: input.2, total_tests: input.3 }
     }
-    pub fn print_test_result(results: Vec<TestResult>) {
+    pub fn overall_result(&self) -> &str {
+        if self.failure == 0 && self.error == 0 {"PASSED"} else {"FAILED"}
+    }
+    fn print_with_time(&self, time_taken: &str) {
+        println!("Ran {} tests in {} with {} successes, {} failures, and {} errors\n\n{}", self.total_tests, time_taken, self.success, self.failure, self.error, self.overall_result())
+    }
+    pub fn print_test_result(results: Vec<TestResult>, maybe_time_taken: Option<&str>) {
+        // Not really a fan of how printing with or without time is being handled here, and how the Display impl is
+        // being mostly ignored. Should be a way to refactor this
         let result_count: ResultCount = results.iter().map(|x| x.get_result_counts()).sum();
-        println!("{}", result_count);
+        match maybe_time_taken {
+            Some(time_taken) => result_count.print_with_time(time_taken),
+            None => println!("{}", result_count)
+        }
     }
 }
 
@@ -185,7 +196,8 @@ pub fn print_function_error(e: &ChimeraRuntimeFailure, depth: usize) {
 // TODO: Should variable scoping be added? How will this impact the teardown stack (if teardown is added by called non-
 //       test functions)?
 pub fn run_test_function(function: Function, variable_map: &mut HashMap<String, AssignmentValue>, depth: usize, web_client: &reqwest::blocking::Client) -> TestResult {
-    print_in_function(&format!("RUNNING TEST {}", function.name), depth);
+    print_in_function(&format!("STARTING TEST - {}", function.name), depth);
+    let timer = Timer::new();
     let mut context = Context::new();
     // TODO: If the ability to call functions is added (like calling an init function) the teardown stack needs to be
     //       passed as a mut reference into that function so it can add teardown to the stack. Should only be able
@@ -245,24 +257,25 @@ pub fn run_test_function(function: Function, variable_map: &mut HashMap<String, 
 
     // TODO: When the test function ends, process the teardown stack
 
-    let (status, result_message) = match runtime_failure {
+    let status = match runtime_failure {
         Some(failure_reason) => {
             match failure_reason {
                 ChimeraRuntimeFailure::TestFailure(_, _) => match is_expected_failure {
-                    true => (Status::ExpectedFailure, format!("TEST {} EXPECTED FAILURE", function_name.as_str())),
-                    false => (Status::Failure(failure_reason), format!("TEST {} FAILURE", function_name.as_str()))
+                    true => Status::ExpectedFailure,
+                    false => Status::Failure(failure_reason)
                 },
-                _ => (Status::Error(failure_reason), format!("TEST {} ERROR", function_name.as_str()))
+                _ => Status::Error(failure_reason)
             }
         },
         None => {
             match is_expected_failure {
-                true => (Status::UnexpectedSuccess, format!("TEST {} UNEXPECTED SUCCESS", function_name.as_str())),
-                false => (Status::Success, format!("TEST {} SUCCESS", function_name.as_str()))
+                true => Status::UnexpectedSuccess,
+                false => Status::Success
             }
         }
     };
-    print_in_function(&result_message, depth);
+    let time_to_run = timer.finish();
+    print_in_function(&format!("FINISHED TEST - {} - {} - {}", function_name.as_str(), time_to_run, &status), depth);
     TestResult::new(function_name, status, subtest_results)
 }
 
