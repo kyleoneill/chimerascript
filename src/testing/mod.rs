@@ -4,9 +4,10 @@ mod testing {
     use std::path::Path;
     use std::sync::{OnceLock, Once};
     use reqwest::blocking::Client;
-    use crate::frontend::run_functions;
+    use crate::frontend::{run_functions, TestResult};
     use crate::WEB_REQUEST_DOMAIN;
     use crate::abstract_syntax_tree::ChimeraScriptAST;
+    use crate::err_handle::{ChimeraRuntimeFailure, VarTypes};
 
     static INIT: Once = Once::new();
 
@@ -17,14 +18,6 @@ mod testing {
     //       the requests being made and providing the expected response, so the use of a server
     //       is avoided. The Client being passed in should be mocked so real http requests are not
     //       made when running tests
-
-    // TODO: The Return value from tests should be changed. Would be better to return some sort of
-    //       Vec of TestResult which has a test name, if it passed or failed, and sub-test results.
-    //       This would allow tests to be _much_ more helpful. Right now, if a .chs file used by
-    //       these tests has 10 test-cases testing behavior, we just assert that 10 test-cases pass.
-    //       This is extremely unhelpful if the test fails, as it is not immediately apparent
-    //       what behavior is broken. The larger the .chs file, the more ambiguous it is as to
-    //       what failed
 
     fn initialize() -> &'static Client {
         // The `INIT: Once` will "lock" this part of the function so its logic can only ever be run once
@@ -45,14 +38,44 @@ mod testing {
         }
     }
 
-    fn results_from_filename(filename: &str) -> (usize, usize, usize) {
+    fn results_from_filename(filename: &str) -> Vec<TestResult> {
         let client = initialize();
         let ast = read_cs_file(filename);
         run_functions(ast, client)
     }
 
+    fn assert_test_pass(result: &TestResult, filename: &str, while_doing: &str) {
+        assert!(result.passed(), "Test case {} of file {} failed {}", result.test_name(), filename, while_doing);
+    }
+
+    fn assert_subtest_length(result: &TestResult, expected_len: usize, filename: &str) {
+        assert_eq!(result.subtest_results.len(), expected_len, "Test case {} of file {} should have {} subtest results but had {}", result.test_name(), filename, expected_len, result.subtest_results.len());
+    }
+
+    fn assert_test_fail(result: &TestResult, filename: &str, while_doing: &str, should_fail_as: ChimeraRuntimeFailure) {
+        assert_eq!(result.passed(), false, "Test case {} of file {} should fail {}", result.test_name(), filename, while_doing);
+        match result.error_kind() {
+            Some(failure) => {
+                assert_eq!(failure, &should_fail_as, "Test case {} of file {} should fail with error {} but got {}", result.test_name(), filename, should_fail_as.get_variant_name(), failure.get_variant_name());
+                match failure {
+                    ChimeraRuntimeFailure::VarWrongType(_, got_var_type, _) => {
+                        match should_fail_as {
+                            ChimeraRuntimeFailure::VarWrongType(_, ref should_be_var_type, _) => assert_eq!(got_var_type, should_be_var_type, "Test case {} of file {} should fail with a {} error saying that the expected type should be a {} but it was {}", result.test_name(), filename, should_fail_as.get_variant_name(), should_be_var_type, got_var_type),
+                            _ => ()
+                        }
+                    },
+                    _ => ()
+                }
+            },
+            None => panic!("Test case {} of file {} failed but the test result did not contain an error kind", result.test_name(), filename)
+        }
+    }
+
     // TODO: Add tests here for a test-case functions, decorators, teardown, nested functions
     // TODO: Add tests for statements being broken up into multiple lines
+
+    // These tests use assert!() to assert that a boolean field is true but assert_eq!() to assert that a boolean
+    // field is false, rather than assert!(!...), for ease of reading
 
     #[test]
     /// Test that a file with invalid ChimeraScript does not compile
@@ -72,7 +95,9 @@ mod testing {
         let ast = read_cs_file(filename);
         assert_eq!(ast.functions.len(), 1, "Should only get a single test for a test file which contains one test case but got multiple");
         let res = run_functions(ast, client);
-        assert_eq!(res.0, 1, "{} failed, which asserted that 1 equals 1", filename)
+        assert_eq!(res.len(), 1, "Expected to get a single test result when running a chs file with one test case");
+        assert_eq!(res[0].subtest_results.len(), 0, "Test case {} of file {} should have 0 subtests", res[0].test_name(), filename);
+        assert_test_pass(&res[0], filename, "when asserting that 1 == 1");
     }
 
     #[test]
@@ -80,7 +105,9 @@ mod testing {
     fn literals() {
         let filename = "literals.chs";
         let res = results_from_filename(filename);
-        assert_eq!(res.0, 2, "{} failed, which tests that assertions can be made using literal values both directly and as variables", filename)
+        assert_eq!(res.len(), 2, "Expected to get 2 test results when running a chs file with 2 test cases");
+        assert_test_pass(&res[0], filename, "when making a basic equality assertion for literal values");
+        assert_test_pass(&res[1], filename, "when using literals as variables and running assertions against them");
     }
 
     #[test]
@@ -89,7 +116,10 @@ mod testing {
     fn logical_inversion() {
         let filename = "test_negation.chs";
         let res = results_from_filename(filename);
-        assert_eq!(res.0, 3, "{} failed, which tests that assertions can be negated with NOT and tests can be marked as expected failures", filename)
+        assert_eq!(res.len(), 3, "Expected to get 3 test results when running a chs file with 3 test cases");
+        assert_test_pass(&res[0], filename, "when using an expected-failure on a failing assertion");
+        assert_test_pass(&res[1], filename, "when using an ASSERT NOT EQUALS");
+        assert_test_pass(&res[2], filename, "when using an expected-failure on a passing assertion");
     }
 
     #[test]
@@ -97,8 +127,13 @@ mod testing {
     fn failing_tests() {
         let filename = "failing_test.chs";
         let res = results_from_filename(filename);
-        assert_eq!(res.0, 0, "{} should have zero passing tests but had {}", filename, res.0);
-        assert_eq!(res.1, 5, "{} should have 5 failing tests but had {}", filename, res.1)
+        assert_eq!(res.len(), 5, "Expected to get 5 test results when running {} which has 5 outermost test cases", filename);
+        assert_eq!(res[0].subtest_results.len(), 0, "Test case {} of file {} should have no subtest_results even though it has a nested test case, as it should have failed before reaching the nested case", res[0].test_name(), filename);
+        assert_test_fail(&res[0], filename, "on a bad equality assertion", ChimeraRuntimeFailure::TestFailure("".to_owned(), 0));
+        assert_test_fail(&res[1], filename, "on a bad GTE assertion", ChimeraRuntimeFailure::TestFailure("".to_owned(), 0));
+        assert_test_fail(&res[2], filename, "on a bad GT assertion", ChimeraRuntimeFailure::TestFailure("".to_owned(), 0));
+        assert_test_fail(&res[3], filename, "on a bad LTE assertion", ChimeraRuntimeFailure::TestFailure("".to_owned(), 0));
+        assert_test_fail(&res[4], filename, "on a bad LT assertion", ChimeraRuntimeFailure::TestFailure("".to_owned(), 0));
     }
 
     #[test]
@@ -106,7 +141,20 @@ mod testing {
     fn nested_tests() {
         let filename = "nested.chs";
         let res = results_from_filename(filename);
-        assert_eq!(res.0, 3, "{} should have 3 passing nested tests but had {}", filename, res.0);
+        assert_eq!(res.len(), 2, "Expected to get 2 test results when running {} which has two outermost tests which both contain nested tests", filename);
+
+        // First outer test verifies that deeply nested tests pass
+        assert_subtest_length(&res[0], 1, filename);
+        assert_test_pass(&res[0], filename, "when making a simple assertion and having a nested subtest");
+        assert_subtest_length(&res[0].subtest_results[0], 1, filename);
+        assert_test_pass(&res[0].subtest_results[0], filename, "when making a simple assertion as a subtest with a subtest of its own");
+        assert_subtest_length(&res[0].subtest_results[0].subtest_results[0], 0, filename);
+        assert_test_pass(&res[0].subtest_results[0].subtest_results[0], filename, "when making a simple assertion as a deeply nested subtest");
+
+        // Second outer test verifies that a child test failing does not prevent a parent test from passing
+        assert_subtest_length(&res[1], 1, filename);
+        assert_test_fail(&res[1].subtest_results[0], filename, "when making an assertion that 1==2", ChimeraRuntimeFailure::TestFailure("".to_string(), 0));
+        assert_test_pass(&res[1], filename, "when it should pass, even if it has a failing child test");
     }
 
     #[test]
@@ -114,7 +162,23 @@ mod testing {
     fn web_requests() {
         let filename = "web_request.chs";
         let res = results_from_filename(filename);
-        assert_eq!(res.0, 6, "{} should have 6 passing web request tests but had {}", filename, res.0);
+        assert_eq!(res.len(), 4);
+
+        // Test GET
+        assert_test_pass(&res[0], filename, "to confirm basic usage of a GET request");
+        assert_subtest_length(&res[0], 1, filename);
+        assert_test_pass(&res[0].subtest_results[0], filename, "to confirm that CONTAINS can be used on a web response");
+
+        // Test PUT
+        assert_test_pass(&res[1], filename, "to confirm basic usage of a PUT request");
+        assert_subtest_length(&res[1], 1, filename);
+        assert_test_pass(&res[1].subtest_results[0], filename, "to use a variable in an endpoint path");
+
+        // Test DELETE
+        assert_test_pass(&res[2], filename, "to confirm basic usage of a DELETE request");
+
+        // Test POST
+        assert_test_pass(&res[3], filename, "to confirm basic usage of a POST request");
     }
 
     #[test]
@@ -122,7 +186,23 @@ mod testing {
     fn runtime_errors() {
         let filename = "runtime_errors.chs";
         let res = results_from_filename(filename);
-        assert_eq!(res.2, 3, "{} should have 3 error tests which report an error due to runtime errors but had {}", filename, res.2);
+        assert_eq!(res.len(), 6);
+
+        // Non-existent var
+        assert_test_fail(&res[0], filename, "when using a non-existent variable", ChimeraRuntimeFailure::VarNotFound("".to_owned(), 0));
+
+        // Bad subfield access
+        assert_test_fail(&res[1], filename, "when making a bad subfield access", ChimeraRuntimeFailure::BadSubfieldAccess(None, "".to_owned(), 0));
+
+        // Wrong type
+        assert_test_fail(&res[2], filename, "when using a GT assertion on a non-numeric type", ChimeraRuntimeFailure::VarWrongType("".to_owned(), VarTypes::Number, 0));
+
+        // Index a list with an out-of-bounds value
+        assert_test_fail(&res[3], filename, "when accessing a list with an out of bounds value", ChimeraRuntimeFailure::OutOfBounds(0));
+
+        // Index a list with a non-existent subfield and a non number
+        assert_test_fail(&res[4], filename, "when accessing a list via a non-existent subfield", ChimeraRuntimeFailure::TriedToIndexWithNonNumber(0));
+        assert_test_fail(&res[5], filename, "when accessing a list with a non-numerical index", ChimeraRuntimeFailure::TriedToIndexWithNonNumber(0));
     }
 
     #[test]
@@ -134,7 +214,8 @@ mod testing {
         // an unsafe block both here and in our write method which is not great
         let filename = "print.chs";
         let res = results_from_filename(filename);
-        assert_eq!(res.0, 1, "{} should have 1 passing test which prints but had {}", filename, res.0);
+        assert_eq!(res.len(), 1);
+        assert_test_pass(&res[0], filename, "when printing a literal and a variable");
     }
 
     #[test]
@@ -143,8 +224,35 @@ mod testing {
     fn list_command() {
         let filename = "list.chs";
         let res = results_from_filename(filename);
-        assert_eq!(res.0, 10, "{} should have 10 passing tests which test lists but had {}", filename, res.0);
-        assert_eq!(res.2, 5, "{} should have 5 errors from testing bad list access but had {}", filename, res.2);
+        assert_eq!(res.len(), 6);
+
+        // Test general list functionality
+        assert_eq!(res[0].subtest_results.len(), 9);
+        assert_test_pass(&res[0], filename, "when making a new list");
+        assert_test_pass(&res[0].subtest_results[0], filename, "when getting a list length");
+        assert_test_pass(&res[0].subtest_results[1], filename, "when making an empty list");
+        assert_test_pass(&res[0].subtest_results[2], filename, "when printing a list");
+        assert_test_pass(&res[0].subtest_results[3], filename, "when accessing a list by index");
+        assert_test_pass(&res[0].subtest_results[4], filename, "when appending to a list");
+        assert_test_pass(&res[0].subtest_results[5], filename, "when removing from a list by index");
+        assert_test_pass(&res[0].subtest_results[6], filename, "when using LENGTH assertion on a list");
+        assert_test_pass(&res[0].subtest_results[7], filename, "when using CONTAINS assertion on a list");
+        assert_test_pass(&res[0].subtest_results[8], filename, "when popping from a list");
+
+        // Remove a value from list out of bounds
+        assert_test_fail(&res[1], filename, "when removing a value from a list with an out-of-bounds index", ChimeraRuntimeFailure::OutOfBounds(0));
+
+        // Append to a list that doesn't exist
+        assert_test_fail(&res[2], filename, "when appending to a list that does not exist", ChimeraRuntimeFailure::VarNotFound("".to_owned(), 0));
+
+        // ASSERT LENGTH on a non-list
+        assert_test_fail(&res[3], filename, "when asserting length on a non-list", ChimeraRuntimeFailure::VarWrongType("".to_owned(), VarTypes::List, 0));
+
+        // ASSERT CONTAINS on a literal value
+        assert_test_fail(&res[4], filename, "when asserting CONTAINS on a literal value", ChimeraRuntimeFailure::VarWrongType("".to_owned(), VarTypes::Containable, 0));
+
+        // LIST POP on an empty list
+        assert_test_fail(&res[5], filename, "when using POP on an empty list", ChimeraRuntimeFailure::OutOfBounds(0));
     }
 
     #[test]
@@ -153,7 +261,9 @@ mod testing {
     fn number_kinds() {
         let filename = "numberkinds.chs";
         let res = results_from_filename(filename);
-        assert_eq!(res.0, 2, "{} should have 2 passing tess which test different types of numbers but had {}", filename, res.0)
+        assert_eq!(res.len(), 2);
+        assert_test_pass(&res[0], filename, "when testing assertions on the different types of numbers");
+        assert_test_pass(&res[1], filename, "when using the different kinds of numbers in a list");
     }
 
     #[test]
@@ -161,6 +271,10 @@ mod testing {
     fn comments() {
         let filename = "comments.chs";
         let res = results_from_filename(filename);
-        assert_eq!(res.0, 1, "{} should have 1 passing test which uses comments but had {}", filename, res.0)
+        assert_eq!(res.len(), 1);
+        assert_test_pass(&res[0], filename, "when running 1==1 assertions while using comments");
     }
+
+    // TODO: Test for get_result_counts. Test something with multiple outer cases, nested tests, passes, errors, and failures
+    //       Make sure some nested cases are reached and others are not (they are nested after a failure of parent)
 }

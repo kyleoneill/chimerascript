@@ -8,3 +8,11 @@ case outermost-test() {
     }
   }
 }
+
+[test]
+case outer-test() {
+    ASSERT EQUALS 1 1;
+    case failing-nested() {
+        ASSERT EQUALS 1 2;
+    }
+}

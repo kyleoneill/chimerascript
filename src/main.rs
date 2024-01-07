@@ -6,6 +6,7 @@ mod literal;
 mod testing;
 
 use err_handle::print_error;
+use frontend::ResultCount;
 
 extern crate reqwest;
 extern crate serde;
@@ -79,9 +80,8 @@ fn main() {
 
     match ChimeraScriptAST::new(file_contents.as_str()) {
         Ok(ast) => {
-            let (passed, failed, errored) = frontend::run_functions(ast, &web_client);
-            let overall_result = if failed == 0 && errored == 0 {"PASSED"} else {"FAILED"};
-            println!("TEST {} WITH {} SUCCESSES, {} FAILURES, AND {} ERRORS", overall_result, passed, failed, errored);
+            let test_results = frontend::run_functions(ast, &web_client);
+            ResultCount::print_test_result(test_results);
         },
         Err(e) => e.print_error()
     }
