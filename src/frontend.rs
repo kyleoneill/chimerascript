@@ -191,7 +191,6 @@ pub fn run_test_function(function: Function, variable_map: &mut HashMap<String, 
     //       passed as a mut reference into that function so it can add teardown to the stack. Should only be able
     //       to call non-test functions with no parents?
     let mut teardown_stack: Vec<Statement> = Vec::new();
-    let mut this_test_passed = true;
 
     // Get these two variables here as they are needed at the end and the for..in.. is about to consume function
     let is_expected_failure = function.is_expected_failure();
@@ -234,7 +233,6 @@ pub fn run_test_function(function: Function, variable_map: &mut HashMap<String, 
                 match statement_result {
                     Ok(_) => (),
                     Err(runtime_error) => {
-                        this_test_passed = false;
                         print_function_error(&runtime_error, depth);
                         runtime_failure = Some(runtime_error);
                         break;
@@ -247,21 +245,20 @@ pub fn run_test_function(function: Function, variable_map: &mut HashMap<String, 
 
     // TODO: When the test function ends, process the teardown stack
 
-    let (status, result_message) = match this_test_passed {
-        true => {
+    let (status, result_message) = match runtime_failure {
+        Some(failure_reason) => {
+            match failure_reason {
+                ChimeraRuntimeFailure::TestFailure(_, _) => match is_expected_failure {
+                    true => (Status::ExpectedFailure, format!("TEST {} EXPECTED FAILURE", function_name.as_str())),
+                    false => (Status::Failure(failure_reason), format!("TEST {} FAILURE", function_name.as_str()))
+                },
+                _ => (Status::Error(failure_reason), format!("TEST {} ERROR", function_name.as_str()))
+            }
+        },
+        None => {
             match is_expected_failure {
                 true => (Status::UnexpectedSuccess, format!("TEST {} UNEXPECTED SUCCESS", function_name.as_str())),
                 false => (Status::Success, format!("TEST {} SUCCESS", function_name.as_str()))
-            }
-        },
-        false => {
-            let reason = runtime_failure.expect("runtime_failure var should never be None when the test failed");
-            match &reason {
-                ChimeraRuntimeFailure::TestFailure(_, _) => match is_expected_failure {
-                    true => (Status::ExpectedFailure, format!("TEST {} EXPECTED FAILURE", function_name.as_str())),
-                    false => (Status::Failure(reason), format!("TEST {} FAILURE", function_name.as_str()))
-                },
-                _ => (Status::Error(reason), format!("TEST {} ERROR", function_name.as_str()))
             }
         }
     };
