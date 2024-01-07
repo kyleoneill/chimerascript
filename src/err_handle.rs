@@ -17,7 +17,7 @@ impl ChimeraCompileError {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum VarTypes {
     Number,
     Unsigned,
@@ -79,12 +79,41 @@ impl Display for ChimeraRuntimeFailure {
     }
 }
 
+impl PartialEq for ChimeraRuntimeFailure {
+    fn eq(&self, other: &Self) -> bool {
+        match self {
+            ChimeraRuntimeFailure::VarNotFound(_, _) => { match other { ChimeraRuntimeFailure::VarNotFound(_, _) => true, _ => false } }
+            ChimeraRuntimeFailure::VarWrongType(_, _, _) => { match other { ChimeraRuntimeFailure::VarWrongType(_, _, _) => true, _ => false } }
+            ChimeraRuntimeFailure::TestFailure(_, _) => { match other { ChimeraRuntimeFailure::TestFailure(_, _) => true, _ => false } }
+            ChimeraRuntimeFailure::InternalError(_) => { match other { ChimeraRuntimeFailure::InternalError(_) => true, _ => false } }
+            ChimeraRuntimeFailure::WebRequestFailure(_, _) => { match other { ChimeraRuntimeFailure::WebRequestFailure(_, _) => true, _ => false } }
+            ChimeraRuntimeFailure::BadSubfieldAccess(_, _, _) => { match other { ChimeraRuntimeFailure::BadSubfieldAccess(_, _, _) => true, _ => false } }
+            ChimeraRuntimeFailure::TriedToIndexWithNonNumber(_) => { match other { ChimeraRuntimeFailure::TriedToIndexWithNonNumber(_) => true, _ => false } }
+            ChimeraRuntimeFailure::OutOfBounds(_) => { match other { ChimeraRuntimeFailure::OutOfBounds(_) => true, _ => false } }
+        }
+    }
+}
+
 impl ChimeraRuntimeFailure {
     // TODO: This should take a formatter which controls how printing is done. The formatter can be responsible for
     //       adding space to match the current depth of where something is being printed, be responsible for the
     //       line/column of an error, etc. See the to-do comment in frontend.rs
     pub fn print_error(&self) {
         eprintln!("{}", self);
+    }
+
+    #[allow(dead_code)] // Used by tests
+    pub fn get_variant_name(&self) -> &str {
+        match self {
+            ChimeraRuntimeFailure::VarNotFound(_, _) => "VarNotFound",
+            ChimeraRuntimeFailure::VarWrongType(_, _, _) => "VarWrongType",
+            ChimeraRuntimeFailure::TestFailure(_, _) => "TestFailure",
+            ChimeraRuntimeFailure::InternalError(_) => "InternalError",
+            ChimeraRuntimeFailure::WebRequestFailure(_, _) => "WebRequestFailure",
+            ChimeraRuntimeFailure::BadSubfieldAccess(_, _, _) => "BadSubfieldAccess",
+            ChimeraRuntimeFailure::TriedToIndexWithNonNumber(_) => "TriedToIndexWithNonNumber",
+            ChimeraRuntimeFailure::OutOfBounds(_) => "OutOfBounds",
+        }
     }
 }
 
