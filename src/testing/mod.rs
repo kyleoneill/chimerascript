@@ -277,4 +277,6 @@ mod testing {
 
     // TODO: Test for get_result_counts. Test something with multiple outer cases, nested tests, passes, errors, and failures
     //       Make sure some nested cases are reached and others are not (they are nested after a failure of parent)
+
+    // TODO: Test for error messages when a test fails
 }

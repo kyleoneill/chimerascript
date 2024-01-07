@@ -17,6 +17,7 @@ impl Context {
     }
 }
 
+#[derive(Debug)]
 pub enum Status {
     Success,
     Failure(ChimeraRuntimeFailure),
@@ -39,6 +40,7 @@ impl Display for Status {
     }
 }
 
+#[derive(Debug)]
 pub struct ResultCount {
     success: usize,
     failure: usize,
@@ -49,7 +51,7 @@ pub struct ResultCount {
 impl Display for ResultCount {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let overall_result = if self.failure == 0 && self.error == 0 {"PASSED"} else {"FAILED"};
-        write!(f, "Ran {} tests with {} successes, {} failures, and {} errors\n\nTEST SUITE {}", self.total_tests, self.success, self.failure, self.error, overall_result)
+        write!(f, "Ran {} tests with {} successes, {} failures, and {} errors\n\n{}", self.total_tests, self.success, self.failure, self.error, overall_result)
     }
 }
 
@@ -72,7 +74,7 @@ impl std::ops::Add for ResultCount {
         Self {
             success: self.success + rhs.success,
             failure: self.failure + rhs.failure,
-            error: self.failure + rhs.failure,
+            error: self.error + rhs.error,
             total_tests: self.total_tests + rhs.total_tests
         }
     }
@@ -86,6 +88,7 @@ impl Sum for ResultCount {
 
 // TODO: Ability to turn this into structured output for testing/CI? Ex, convert this into JSON
 #[allow(dead_code)] // "dead" field by tests
+#[derive(Debug)]
 pub struct TestResult {
     name: String,
     status: Status,
@@ -239,7 +242,10 @@ pub fn run_test_function(function: Function, variable_map: &mut HashMap<String, 
                                 break;
                             },
                             // TODO: Need to still process teardown even here
-                            _ => return TestResult::new(function_name, Status::Error(runtime_error), subtest_results)
+                            _ => {
+                                print_function_error(&runtime_error, depth);
+                                return TestResult::new(function_name, Status::Error(runtime_error), subtest_results)
+                            }
                         }
                     }
                 }
