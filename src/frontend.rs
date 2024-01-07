@@ -87,7 +87,7 @@ impl Sum for ResultCount {
 }
 
 // TODO: Ability to turn this into structured output for testing/CI? Ex, convert this into JSON
-#[allow(dead_code)] // "dead" field by tests
+#[allow(dead_code)] // "dead" field used by tests
 #[derive(Debug)]
 pub struct TestResult {
     name: String,
@@ -198,7 +198,7 @@ pub fn run_test_function(function: Function, variable_map: &mut HashMap<String, 
     let function_name = function.name;
 
     let mut subtest_results: Vec<TestResult> = Vec::new();
-    let mut failure_message: Option<ChimeraRuntimeFailure> = None;
+    let mut runtime_failure: Option<ChimeraRuntimeFailure> = None;
 
     for block_contents in function.block {
         match block_contents {
@@ -234,19 +234,10 @@ pub fn run_test_function(function: Function, variable_map: &mut HashMap<String, 
                 match statement_result {
                     Ok(_) => (),
                     Err(runtime_error) => {
-                        match runtime_error {
-                            ChimeraRuntimeFailure::TestFailure(_, _) => {
-                                this_test_passed = false;
-                                print_function_error(&runtime_error, depth);
-                                failure_message = Some(runtime_error);
-                                break;
-                            },
-                            // TODO: Need to still process teardown even here
-                            _ => {
-                                print_function_error(&runtime_error, depth);
-                                return TestResult::new(function_name, Status::Error(runtime_error), subtest_results)
-                            }
-                        }
+                        this_test_passed = false;
+                        print_function_error(&runtime_error, depth);
+                        runtime_failure = Some(runtime_error);
+                        break;
                     }
                 }
             }
@@ -260,13 +251,17 @@ pub fn run_test_function(function: Function, variable_map: &mut HashMap<String, 
         true => {
             match is_expected_failure {
                 true => (Status::UnexpectedSuccess, format!("TEST {} UNEXPECTED SUCCESS", function_name.as_str())),
-                false => (Status::Success, format!("TEST {} PASSED", function_name.as_str()))
+                false => (Status::Success, format!("TEST {} SUCCESS", function_name.as_str()))
             }
         },
         false => {
-            match is_expected_failure {
-                true => (Status::ExpectedFailure, format!("TEST {} EXPECTED FAILURE", function_name.as_str())),
-                false => (Status::Failure(failure_message.expect("Failed to get a message for a failed assertion")), format!("TEST {} FAILED", function_name.as_str()))
+            let reason = runtime_failure.expect("runtime_failure var should never be None when the test failed");
+            match &reason {
+                ChimeraRuntimeFailure::TestFailure(_, _) => match is_expected_failure {
+                    true => (Status::ExpectedFailure, format!("TEST {} EXPECTED FAILURE", function_name.as_str())),
+                    false => (Status::Failure(reason), format!("TEST {} FAILURE", function_name.as_str()))
+                },
+                _ => (Status::Error(reason), format!("TEST {} ERROR", function_name.as_str()))
             }
         }
     };
