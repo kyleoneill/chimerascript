@@ -4,9 +4,11 @@ mod abstract_syntax_tree;
 mod commands;
 mod literal;
 mod testing;
+mod util;
 
 use err_handle::print_error;
 use frontend::ResultCount;
+use util::Timer;
 
 extern crate reqwest;
 extern crate serde;
@@ -80,8 +82,10 @@ fn main() {
 
     match ChimeraScriptAST::new(file_contents.as_str()) {
         Ok(ast) => {
+            let timer = Timer::new();
             let test_results = frontend::run_functions(ast, &web_client);
-            ResultCount::print_test_result(test_results);
+            let run_time = timer.finish();
+            ResultCount::print_test_result(test_results, Some(run_time.as_str()));
         },
         Err(e) => e.print_error()
     }
