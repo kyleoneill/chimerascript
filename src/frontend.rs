@@ -176,21 +176,10 @@ pub fn run_functions(ast: ChimeraScriptAST, web_client: &reqwest::blocking::Clie
 }
 
 pub fn print_in_function(thing: &impl Display, depth: usize) {
-    // TODO: Is there a better way to display in a function? Should be using a formatter
-    for _ in 0..depth {
-        print!(" ");
-    }
-    println!("{}", thing);
-}
-
-pub fn print_function_error(e: &ChimeraRuntimeFailure, depth: usize) {
-    // TODO: This is hacky, find a better solution for printing errors at the correct depth
-    //       Maybe pass in a formatter object to print_error() which handles printing
-    //       in the right formatting. See the to-do above the print_error() function
-    for _ in 0..(depth + 1) {
-        eprint!(" ");
-    }
-    e.print_error();
+    // This formats an empty string to be padded rightwards by `depth`
+    // Cannot directly add padding to `thing` because padding is conditionally added to things shorter than the
+    // padding amount, so an empty string is used instead to act as padding
+    println!("{:indent$}{}", "", thing, indent=depth);
 }
 
 // TODO: Should variable scoping be added? How will this impact the teardown stack (if teardown is added by called non-
@@ -245,7 +234,7 @@ pub fn run_test_function(function: Function, variable_map: &mut HashMap<String, 
                 match statement_result {
                     Ok(_) => (),
                     Err(runtime_error) => {
-                        print_function_error(&runtime_error, depth);
+                        runtime_error.print_error(depth);
                         runtime_failure = Some(runtime_error);
                         break;
                     }
@@ -284,5 +273,5 @@ fn handle_ast_err(e: pest::error::Error<Rule>) -> ChimeraCompileError {
         pest::error::LineColLocation::Pos(pos) => pos,
         pest::error::LineColLocation::Span(start, _end) => start
     };
-    ChimeraCompileError::new("Failed to parse ChimeraScript", line_col)
+    ChimeraCompileError::new("Invalid ChimeraScript", line_col)
 }

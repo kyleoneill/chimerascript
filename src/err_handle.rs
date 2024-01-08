@@ -13,7 +13,7 @@ impl ChimeraCompileError {
     }
 
     pub fn print_error(&self) {
-        eprintln!("ERROR: {} on line {} column {}", self.error_msg, self.line, self.column);
+        eprintln!("Failed to compile ChimeraScript with error '{}' on line {} column {}", self.error_msg, self.line, self.column);
     }
 }
 
@@ -95,11 +95,8 @@ impl PartialEq for ChimeraRuntimeFailure {
 }
 
 impl ChimeraRuntimeFailure {
-    // TODO: This should take a formatter which controls how printing is done. The formatter can be responsible for
-    //       adding space to match the current depth of where something is being printed, be responsible for the
-    //       line/column of an error, etc. See the to-do comment in frontend.rs
-    pub fn print_error(&self) {
-        eprintln!("{}", self);
+    pub fn print_error(&self, padding: usize) {
+        eprintln!("{:indent$}{}", "", self, indent=padding + 1);
     }
 
     #[allow(dead_code)] // Used by tests
