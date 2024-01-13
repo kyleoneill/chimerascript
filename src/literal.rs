@@ -184,32 +184,6 @@ impl Data {
             _ => accessors.pop().unwrap().to_owned()
         };
         self.recursive_access(&mut accessors, context, var_name)
-        // let mut pointer = self;
-        // loop {
-        //     let accessor = match accessors.pop() {
-        //         Some(a) => a,
-        //         None => break
-        //     };
-        //     let borrow = pointer.borrow(context)?;
-        //     match borrow.deref() {
-        //         Literal::Object(obj) => {
-        //             pointer = match obj.get(accessor) {
-        //                 Some(val) => val,
-        //                 None => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(var_name), accessor.to_string(), context.current_line))
-        //             }
-        //         },
-        //         Literal::List(list) => {
-        //             let index: usize = match accessor.parse() {
-        //                 Ok(i) => i,
-        //                 Err(_) => return Err(ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))
-        //             };
-        //             if index >= list.len() { return Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line)) }
-        //             pointer = &list[index];
-        //         },
-        //         _ => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(var_name), accessor.to_string(), context.current_line))
-        //     }
-        // }
-        // Ok(pointer.clone())
     }
     fn recursive_access(&self, accessors: &mut Vec<&str>, context: &Context, var_name: String) -> Result<Self, ChimeraRuntimeFailure> {
         let accessor = match accessors.pop() {
@@ -294,48 +268,6 @@ impl From<Statement> for Literal {
 }
 
 impl Literal {
-    // pub fn resolve_access(&self, mut accessors: Vec<&str>, context: &Context) -> Result<Data, ChimeraRuntimeFailure> {
-    //     accessors.reverse();
-    //     let var_name = match accessors.len() {
-    //         0 => return Err(ChimeraRuntimeFailure::InternalError("resolving the access of a Literal".to_string())),
-    //         _ => accessors.pop().unwrap().to_owned()
-    //     };
-    //     // Initialize our pointer with a dummy value as the compiler will stop us from initializing with an empty
-    //     // value, even though it _must_ be set as accessors.len() is always greater than 0 on the first loop
-    //     let mut pointer = Data::from_literal(self);
-    //     loop {
-    //         let accessor = match accessors.pop() {
-    //             Some(a) => a,
-    //             None =>
-    //         }
-    //     }
-    //
-    //     while accessors.len() != 0 {
-    //         let accessor = accessors.pop().unwrap();
-    //         let borrow = pointer.borrow()?;
-    //         match borrow.deref() {
-    //             Literal::Object(obj) => {
-    //                 pointer = match obj.get(accessor) {
-    //                     Some(val) => val,
-    //                     None => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(var_name), accessor.to_string(), context.current_line))
-    //                 }
-    //             },
-    //             Literal::List(arr) => {
-    //                 let index: usize = match accessor.parse() {
-    //                     Ok(i) => i,
-    //                     Err(_) => return Err(ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))
-    //                 };
-    //                 if index >= arr.len() { return Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line)) }
-    //                 pointer = &arr[index];
-    //             },
-    //             _ => break
-    //         }
-    //     }
-    //     if accessors.len() > 0 {
-    //         return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(var_name), accessors[accessors.len() - 2].to_string(), context.current_line))
-    //     }
-    //     Ok(pointer.clone())
-    // }
     pub fn to_number(&self) -> Option<NumberKind> {
         match self {
             Self::Number(i) => Some(*i),
