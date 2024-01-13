@@ -1,67 +1,51 @@
-use std::collections::HashMap;
+use std::ops::Deref;
 use crate::literal::Literal;
-use crate::abstract_syntax_tree::{AssertCommand, AssertSubCommand, AssignmentValue};
+use crate::abstract_syntax_tree::{AssertCommand, AssertSubCommand};
 use crate::err_handle::{ChimeraRuntimeFailure, VarTypes};
 use crate::frontend::Context;
+use crate::variable_map::VariableMap;
 
-pub fn assert_command(context: &Context, assert_command: AssertCommand, variable_map: &HashMap<String, AssignmentValue>) -> Result<(), ChimeraRuntimeFailure> {
+pub fn assert_command(context: &Context, assert_command: AssertCommand, variable_map: &VariableMap) -> Result<(), ChimeraRuntimeFailure> {
+    // TODO: The right value should be resolved in each assertion command
+    //       It does not make sense to just return false always on an assert equals, for example, and the current logic
+    //       will cause an `ASSERT EQUALS (some_response) (some_response)` to return `false`
     let left_value = assert_command.left_value.resolve(context, variable_map)?;
-    let right_value = assert_command.right_value.resolve_to_literal(context, variable_map)?;
+    let right_value = assert_command.right_value.resolve(context, variable_map)?;
     let assertion_passed = match assert_command.subcommand {
         AssertSubCommand::LENGTH => {
             let assert_len = right_value.try_into_usize(&assert_command.right_value, context)?;
-            match &left_value {
-                AssignmentValue::Literal(literal) => {
-                    let vec = literal.try_into_list(&assert_command.left_value, context)?;
-                    vec.len() == assert_len
-                },
-                _ => return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.left_value.error_print(), VarTypes::Literal, context.current_line))
-            }
+            let vec = left_value.try_into_list(&assert_command.left_value, context)?;
+            vec.len() == assert_len
         },
-        AssertSubCommand::EQUALS => {
-            match &left_value {
-                AssignmentValue::Literal(left_literal) => left_literal == &right_value,
-                AssignmentValue::HttpResponse(_) => false
-            }
-        },
+        AssertSubCommand::EQUALS => left_value == right_value,
         AssertSubCommand::STATUS => {
             match &left_value {
-                AssignmentValue::HttpResponse(ref http_response) => {
-                    let expected_code = right_value.try_into_u64(&assert_command.right_value, context)?;
-                    http_response.status_code == expected_code
+                Literal::Object(obj) => {
+                    match obj.get("status_code") {
+                        Some(status_code) => {
+                            let expected_code = right_value.try_into_u64(&assert_command.right_value, context)?;
+                            let status_as_num = status_code.try_into_u64(&assert_command.left_value, context)?;
+                            expected_code == status_as_num
+                        },
+                        None => return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.left_value.error_print(), VarTypes::HttpResponse, context.current_line))
+                    }
                 },
                 _ => return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.left_value.error_print(), VarTypes::HttpResponse, context.current_line))
             }
         },
         AssertSubCommand::CONTAINS => {
-            match &left_value {
-                AssignmentValue::Literal(literal) => {
-                    match literal {
-                        Literal::List(list) => {
-                            list.contains(&right_value)
-                        },
-                        Literal::Object(map) => {
-                            let key = right_value.try_into_string(&assert_command.right_value, context)?;
-                            map.contains_key(key)
-                        },
-                        _ => return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.left_value.error_print(), VarTypes::Containable, context.current_line))
-                    }
+            match left_value {
+                Literal::List(list) => list.iter().any(|list_member| list_member.deref() == right_value),
+                Literal::Object(map) => {
+                    let key = right_value.try_into_string(&assert_command.right_value, context)?;
+                    map.contains_key(key)
                 },
-                AssignmentValue::HttpResponse(_) => {
-                    // Resolving the left value should return a Literal, unless _just_ the http_response variable was
-                    // used and in that case there is nothing to check a contains on
-                    return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.left_value.error_print(), VarTypes::Containable, context.current_line))
-                }
+                _ => return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.left_value.error_print(), VarTypes::Containable, context.current_line))
             }
         },
         _ => {
-            // The remaining matches are the four relational operators, left_value and
-            // right_value must be ints for all four
-            let literal_left = match left_value.to_literal() {
-                Some(literal) => literal,
-                None => return Err(ChimeraRuntimeFailure::VarWrongType(assert_command.left_value.error_print(), VarTypes::Number, context.current_line))
-            };
-            let numeric_left = literal_left.try_into_number_kind(&assert_command.left_value, context)?;
+            // The remaining matches are the four relational operators, left and right must both be numbers
+            let numeric_left = left_value.try_into_number_kind(&assert_command.left_value, context)?;
             let numeric_right = right_value.try_into_number_kind(&assert_command.right_value, context)?;
             match assert_command.subcommand {
                 AssertSubCommand::GTE => {

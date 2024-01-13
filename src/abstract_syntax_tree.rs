@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 use std::fmt::Formatter;
+use std::rc::Rc;
 use pest::iterators::Pair;
 use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure, VarTypes};
 use crate::frontend::{Rule, Context};
 use crate::literal::{Literal, NumberKind};
 use crate::{frontend, WEB_REQUEST_DOMAIN};
+use crate::variable_map::VariableMap;
 
 // This has a return value despite only panicking so satisfy the compiler, as it's called inside of
 // `ok_or_else(|| no_pairs_panic())` closures which are meant to transform an Option into a Result.
@@ -539,61 +541,22 @@ impl Value {
         }
     }
 
-    pub fn resolve(&self, context: &Context, variable_map: &HashMap<String, AssignmentValue>) -> Result<AssignmentValue, ChimeraRuntimeFailure> {
+    pub fn resolve<'a>(&'a self, context: &Context, variable_map: &VariableMap) -> Result<&'a Literal, ChimeraRuntimeFailure> {
         match self {
             Value::Literal(val) => {
-                Ok(AssignmentValue::Literal(val.clone()))
+                Ok(val)
             },
             Value::Variable(var_name) => {
                 let accessors: Vec<&str> = var_name.split(".").collect();
-                let value = match variable_map.get(accessors[0]) {
-                    Some(res) => res,
-                    None => return Err(ChimeraRuntimeFailure::VarNotFound(var_name.to_owned(), context.current_line))
-                };
-                // TODO: Is there a way to make this method return a ref? clone might be
-                //       expensive for large AssignmentValues, like for a big web response.
-                //       I think I want to use a Cow here, as that is used for enums that can
-                //       have variants which might be borrowed or owned. Applies for both what's returned from if
-                //       and else blocks
+                let value = variable_map.get(context, accessors[0])?;
                 if accessors.len() == 1 {
-                    return Ok(value.clone())
+                    return Ok(value)
                 }
                 else {
-                    match value {
-                        AssignmentValue::Literal(literal) => { Ok(AssignmentValue::Literal(literal.resolve_access(accessors, context)?.to_owned())) },
-                        AssignmentValue::HttpResponse(http_response) => {
-                            match accessors[1] {
-                                "status_code" => {
-                                    if accessors.len() != 2 {
-                                        return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(accessors[0].to_string()), accessors[2].to_string(), context.current_line))
-                                    }
-                                    Ok(AssignmentValue::Literal(Literal::Number(NumberKind::U64(http_response.status_code))))
-                                },
-                                "body" => {
-                                    let mut without_body_accessor = vec![accessors[0]];
-                                    if accessors.len() > 2 {
-                                        without_body_accessor.append(&mut accessors[2..].to_vec());
-                                    }
-                                    Ok(AssignmentValue::Literal(http_response.body.resolve_access(without_body_accessor, context)?.to_owned()))
-                                },
-                                _ => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(accessors[0].to_string()), accessors[1].to_string(), context.current_line))
-                            }
-                        }
-                    }
+                    Ok(value.resolve_access(accessors, context)?)
                 }
             }
         }
-    }
-
-    pub fn resolve_to_literal(&self, context: &Context, variable_map: &HashMap<String, AssignmentValue>) -> Result<Literal, ChimeraRuntimeFailure> {
-        match self.resolve(context, variable_map)? {
-            AssignmentValue::Literal(literal) => Ok(literal),
-            _ => Err(ChimeraRuntimeFailure::VarWrongType(self.error_print(), VarTypes::Literal, context.current_line))
-        }
-    }
-
-    pub fn value_from_str(input: &str) -> Self {
-        Self::Literal(Literal::String(input.to_owned()))
     }
 }
 
@@ -645,7 +608,7 @@ impl From<Statement> for HttpCommand {
 }
 
 impl HttpCommand {
-    pub fn resolve_path(&self, context: &Context, variable_map: &HashMap<String, AssignmentValue>) -> Result<String, ChimeraRuntimeFailure> {
+    pub fn resolve_path(&self, context: &Context, variable_map: &VariableMap) -> Result<String, ChimeraRuntimeFailure> {
         let domain = WEB_REQUEST_DOMAIN.get().expect("Failed to get static global domain when resolving an HTTP expression");
         let mut resolved_path: String = domain.clone();
         for portion in &self.path {
@@ -681,43 +644,17 @@ pub struct ListCommand {
 }
 
 impl ListCommand {
-    pub fn list_ref<'a>(&'a self, variable_map: &'a HashMap<String, AssignmentValue>, context: &Context) -> Result<&Vec<Literal>, ChimeraRuntimeFailure> {
-        return match variable_map.get(self.list_name.as_str()) {
-            Some(ret) => {
-                match ret {
-                    AssignmentValue::Literal(lit) => {
-                        match lit {
-                            Literal::List(list) => {
-                                return Ok(list)
-                            }
-                            _ => ()
-                        }
-                    },
-                    _ => ()
-                }
-                Err(ChimeraRuntimeFailure::VarWrongType(self.list_name.clone(), VarTypes::List, context.current_line))
-            },
-            None => Err(ChimeraRuntimeFailure::VarNotFound(self.list_name.clone(), context.current_line))
+    pub fn list_ref(&self, variable_map: &VariableMap, context: &Context) -> Result<&Vec<Rc<Literal>>, ChimeraRuntimeFailure> {
+        match variable_map.get(context, self.list_name.as_str())? {
+            Literal::List(borrowed_list) => Ok(borrowed_list),
+            _ => Err(ChimeraRuntimeFailure::VarWrongType(self.list_name.clone(), VarTypes::List, context.current_line))
         }
     }
 
-    pub fn list_mut_ref<'a>(&'a self, variable_map: &'a mut HashMap<String, AssignmentValue>, context: &Context) -> Result<&mut Vec<Literal>, ChimeraRuntimeFailure> {
-        return match variable_map.get_mut(self.list_name.as_str()) {
-            Some(ret) => {
-                match ret {
-                    AssignmentValue::Literal(lit) => {
-                        match lit {
-                            Literal::List(list) => {
-                                return Ok(list)
-                            }
-                            _ => ()
-                        }
-                    },
-                    _ => ()
-                }
-                Err(ChimeraRuntimeFailure::VarWrongType(self.list_name.clone(), VarTypes::List, context.current_line))
-            },
-            None => Err(ChimeraRuntimeFailure::VarNotFound(self.list_name.clone(), context.current_line))
+    pub fn list_mut_ref(&self, variable_map: &VariableMap, context: &Context) -> Result<Vec<Rc<Literal>>, ChimeraRuntimeFailure> {
+        match variable_map.get_mut(context, self.list_name.as_str())? {
+            Literal::List(borrowed_list) => Ok(borrowed_list),
+            _ => Err(ChimeraRuntimeFailure::VarWrongType(self.list_name.clone(), VarTypes::List, context.current_line))
         }
     }
 }
@@ -753,37 +690,6 @@ pub enum HTTPVerb {
     PUT,
     POST,
     DELETE
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub enum AssignmentValue {
-    Literal(Literal),
-    HttpResponse(HttpResponse)
-}
-
-impl std::fmt::Display for AssignmentValue {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AssignmentValue::Literal(literal) => write!(f, "{}", literal),
-            AssignmentValue::HttpResponse(res) => write!(f, "[HttpResponse status_code:{} body:{}]", res.status_code, res.body)
-        }
-    }
-}
-
-impl AssignmentValue {
-    pub fn to_literal(&self) -> Option<&Literal> {
-        match self {
-            Self::Literal(literal) => Some(literal),
-            _ => None
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub struct HttpResponse {
-    // TODO: Store header data?
-    pub status_code: u64,
-    pub body: Literal
 }
 
 /*

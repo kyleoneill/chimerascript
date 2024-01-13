@@ -5,6 +5,7 @@ mod commands;
 mod literal;
 mod testing;
 mod util;
+mod variable_map;
 
 use err_handle::print_error;
 use frontend::ResultCount;

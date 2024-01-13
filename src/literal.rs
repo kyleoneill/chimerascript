@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::Formatter;
@@ -126,14 +128,16 @@ impl NumberKind {
 // TODO: https://pest.rs/book/examples/json.html?highlight=optional#writing-the-grammar
 //       If I want to support a full JSON value being stored here, like `var foo = LITERAL {"my_json":{"key":"val"}}
 
+
+// TODO: Should I move the collection types (object, list) out of this and into their own enum?
 #[derive(Debug, PartialEq, Clone)]
 pub enum Literal {
     String(String),
     Number(NumberKind),
     Bool(bool),
     Null,
-    Object(HashMap<String, Self>),
-    List(Vec<Self>)
+    Object(HashMap<String, Rc<RefCell<Self>>>),
+    List(Vec<Rc<RefCell<Self>>>)
 }
 
 impl std::fmt::Display for Literal {
@@ -213,7 +217,7 @@ impl Literal {
             _ => None
         }
     }
-    fn to_list(&self) -> Option<&Vec<Self>> {
+    fn to_list(&self) -> Option<&Vec<Rc<Self>>> {
         match self {
             Self::List(list) => Some(list),
             _ => None
@@ -240,7 +244,7 @@ impl Literal {
         };
         return Err(ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::Unsigned, context.current_line))
     }
-    pub fn try_into_list(&self, came_from: &Value, context: &Context) -> Result<&Vec<Self>, ChimeraRuntimeFailure> {
+    pub fn try_into_list(&self, came_from: &Value, context: &Context) -> Result<&Vec<Rc<Self>>, ChimeraRuntimeFailure> {
         Ok(self.to_list().ok_or_else(|| return ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::List, context.current_line))?)
     }
     pub fn try_into_string(&self, came_from: &Value, context: &Context) -> Result<&str, ChimeraRuntimeFailure> {
@@ -293,7 +297,7 @@ impl <'de> Deserialize<'de> for Literal {
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error> where A: MapAccess<'de> {
                 match map.next_key()? {
                     Some(first_key) => {
-                        let mut values: HashMap<String, Literal> = HashMap::new();
+                        let mut values: HashMap<String, Rc<Literal>> = HashMap::new();
                         values.insert(first_key, map.next_value()?);
                         while let Some((key, value)) = map.next_entry()? {
                             values.insert(key, value);

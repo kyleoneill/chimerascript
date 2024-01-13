@@ -1,12 +1,12 @@
-use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::iter::Sum;
 use pest::iterators::Pairs;
 use pest::Parser;
 use pest_derive::Parser;
-use crate::abstract_syntax_tree::{AssignmentValue, ChimeraScriptAST, Statement, Function, BlockContents};
+use crate::abstract_syntax_tree::{ChimeraScriptAST, Statement, Function, BlockContents};
 use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure};
 use crate::util::Timer;
+use crate::variable_map::VariableMap;
 
 pub struct Context {
     pub current_line: i32
@@ -168,7 +168,7 @@ pub fn run_functions(ast: ChimeraScriptAST, web_client: &reqwest::blocking::Clie
     let mut results: Vec<TestResult> = Vec::new();
     for function in ast.functions {
         if function.is_test_function() {
-            let mut function_variables: HashMap<String, AssignmentValue> = HashMap::new();
+            let mut function_variables: VariableMap;
             results.push(run_test_function(function, &mut function_variables, 0, web_client));
         }
     }
@@ -184,7 +184,7 @@ pub fn print_in_function(thing: &impl Display, depth: usize) {
 
 // TODO: Should variable scoping be added? How will this impact the teardown stack (if teardown is added by called non-
 //       test functions)?
-pub fn run_test_function(function: Function, variable_map: &mut HashMap<String, AssignmentValue>, depth: usize, web_client: &reqwest::blocking::Client) -> TestResult {
+pub fn run_test_function(function: Function, variable_map: &mut VariableMap, depth: usize, web_client: &reqwest::blocking::Client) -> TestResult {
     print_in_function(&format!("STARTING TEST - {}", function.name), depth);
     let timer = Timer::new();
     let mut context = Context::new();
