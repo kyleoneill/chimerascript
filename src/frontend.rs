@@ -168,7 +168,7 @@ pub fn run_functions(ast: ChimeraScriptAST, web_client: &reqwest::blocking::Clie
     let mut results: Vec<TestResult> = Vec::new();
     for function in ast.functions {
         if function.is_test_function() {
-            let mut function_variables: VariableMap;
+            let mut function_variables = VariableMap::new();
             results.push(run_test_function(function, &mut function_variables, 0, web_client));
         }
     }

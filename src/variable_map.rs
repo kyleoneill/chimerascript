@@ -1,8 +1,6 @@
-use std::rc::Rc;
-use std::cell::{RefCell, RefMut};
+use std::cell::RefMut;
 use std::collections::HashMap;
-use std::ops::Deref;
-use crate::literal::Literal;
+use crate::literal::{Literal, Data};
 use crate::err_handle::ChimeraRuntimeFailure;
 use crate::frontend::Context;
 
@@ -20,6 +18,9 @@ The same will occur for setting a variable equal to an access within a Literal(O
 RefCell is used to mutate data in multiple places, it acts like Rust's borrow checker except the checks are done
 at runtime. This will allow mutation of variables, which is needed to modify lists and objects
 
+Rc is "transparent", we can call RefCell's methods directly on var_value despite it being an &Rc
+All Rc methods must be called like Rc::Foo() so they do not conflict with methods of the inner value
+
 -------------------------
 RefCell vs Cell
 Cell has restrictions. It does not impl Send/Sync and is not thread safe. Data operates on a transaction level. To
@@ -31,40 +32,27 @@ removed and replaced.
 */
 
 pub struct VariableMap {
-    map: HashMap<String, Rc<RefCell<Literal>>>
+    map: HashMap<String, Data>
 }
 
 impl VariableMap {
     pub fn new() -> Self {
         Self { map: HashMap::new() }
     }
-    pub fn get(&self, context: &Context, key: &str) -> Result<&Literal, ChimeraRuntimeFailure> {
-        // Rc is "transparent", we can call RefCell's methods directly on var_value despite it being an &Rc
-        // All Rc methods must be called like Rc::Foo() so they do not conflict with methods of the inner value
+    pub fn get(&self, context: &Context, key: &str) -> Result<&Data, ChimeraRuntimeFailure> {
         match self.map.get(key) {
-            Some(var_value) => {
-                match var_value.try_borrow() {
-                    Ok(borrowed_value) => Ok(borrowed_value.deref()),
-                    // TODO: Should this be returning an InternalError? Is there a better err to be returning here?
-                    Err(_) => ChimeraRuntimeFailure::InternalError("Trying to immutably borrow a reference".to_owned())
-                }
-            }
+            Some(var_value) => Ok(var_value),
             None => Err(ChimeraRuntimeFailure::VarNotFound(key.to_owned(), context.current_line))
         }
     }
+
     pub fn get_mut(&self, context: &Context, key: &str) -> Result<RefMut<Literal>, ChimeraRuntimeFailure> {
         match self.map.get(key) {
-            Some(var_value) => {
-                match var_value.try_borrow_mut() {
-                    Ok(borrowed_value) => Ok(borrowed_value),
-                    // TODO: Should this be returning an InternalError? Is there a better err to be returning here?
-                    Err(_) => ChimeraRuntimeFailure::InternalError("Trying to immutably borrow a reference".to_owned())
-                }
-            }
+            Some(var_value) => var_value.borrow_mut(context),
             None => Err(ChimeraRuntimeFailure::VarNotFound(key.to_owned(), context.current_line))
         }
     }
-    pub fn insert(&mut self, key: String, value: Rc<RefCell<Literal>>) {
+    pub fn insert(&mut self, key: String, value: Data) {
         self.map.insert(key, value);
     }
 }

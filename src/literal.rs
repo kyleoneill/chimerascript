@@ -1,8 +1,9 @@
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::fmt::Formatter;
+use std::fmt::{Display, Formatter};
+use std::ops::Deref;
 use serde::{Deserialize, Deserializer};
 use serde::de::{Error, MapAccess, SeqAccess, Visitor};
 use crate::abstract_syntax_tree::{Value, Statement};
@@ -102,7 +103,7 @@ impl PartialOrd for NumberKind {
     }
 }
 
-impl std::fmt::Display for NumberKind {
+impl Display for NumberKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             NumberKind::F64(float) => write!(f, "{}", float),
@@ -128,20 +129,130 @@ impl NumberKind {
 // TODO: https://pest.rs/book/examples/json.html?highlight=optional#writing-the-grammar
 //       If I want to support a full JSON value being stored here, like `var foo = LITERAL {"my_json":{"key":"val"}}
 
+#[derive(Debug)]
+pub struct Data {
+    handle: Rc<RefCell<Literal>>
+}
 
-// TODO: Should I move the collection types (object, list) out of this and into their own enum?
+impl Clone for Data {
+    fn clone(&self) -> Self {
+        Self { handle: self.handle.clone() }
+    }
+}
+
+impl PartialEq for Data {
+    fn eq(&self, other: &Self) -> bool {
+        // TODO: This will panic if the handle has a mutable borrow out
+        //       I don't _think_ this is currently possible, but this must be changed
+        //       to guard against future changes.
+        // Realistically, the fix here is to probably break Literal down further to have some schema that looks like
+        // Handle: Rc<RefCell<Data>>
+        // Data: enum of Literal and Collectible
+        // Literal: enum of String, Number, Bool, Null
+        // Collectible: enum of List and Object
+        // Will then need to swap over the derive de-serialize to go into Data
+        // This will be another major refactor but likely necessary
+        self.handle.borrow().deref() == other.handle.borrow().deref()
+    }
+}
+
+impl Data {
+    pub fn from_literal(lit: Literal) -> Self {
+        Self { handle: Rc::new(RefCell::new(lit)) }
+    }
+    pub fn borrow(&self, context: &Context) -> Result<Ref<Literal>, ChimeraRuntimeFailure> {
+        match self.handle.try_borrow() {
+            // Must return a Ref<T> here, returning a Ref<T>::deref() will error.
+            // This happens because RefCell<T>::try_borrow returns a Ref<T> with the lifetime of the &self passed into
+            // this method. Calling deref on that Ref<T> will be a borrow of a borrow, where the second borrow will
+            // go out of scope when this function ends. The first borrow has the lifetime of &self and can be
+            // returned, because the caller gave us &self and knows what the lifetime is.
+            Ok(d) => Ok(d),
+            Err(_) => Err(ChimeraRuntimeFailure::BorrowError(context.current_line, "Cannot borrow a variable when it has a mutable reference in use".to_owned()))
+        }
+    }
+    pub fn borrow_mut(&self, context: &Context) -> Result<RefMut<Literal>, ChimeraRuntimeFailure> {
+        match self.handle.try_borrow_mut() {
+            Ok(d) => Ok(d),
+            Err(_) => Err(ChimeraRuntimeFailure::BorrowError(context.current_line, "Cannot borrow a variable mutably when it already has a reference in use".to_owned()))
+        }
+    }
+    pub fn resolve_access(&self, mut accessors: Vec<&str>, context: &Context) -> Result<Self, ChimeraRuntimeFailure> {
+        accessors.reverse();
+        let var_name = match accessors.len() {
+            0 => return Err(ChimeraRuntimeFailure::InternalError("resolving the access of a Literal".to_string())),
+            _ => accessors.pop().unwrap().to_owned()
+        };
+        self.recursive_access(&mut accessors, context, var_name)
+        // let mut pointer = self;
+        // loop {
+        //     let accessor = match accessors.pop() {
+        //         Some(a) => a,
+        //         None => break
+        //     };
+        //     let borrow = pointer.borrow(context)?;
+        //     match borrow.deref() {
+        //         Literal::Object(obj) => {
+        //             pointer = match obj.get(accessor) {
+        //                 Some(val) => val,
+        //                 None => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(var_name), accessor.to_string(), context.current_line))
+        //             }
+        //         },
+        //         Literal::List(list) => {
+        //             let index: usize = match accessor.parse() {
+        //                 Ok(i) => i,
+        //                 Err(_) => return Err(ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))
+        //             };
+        //             if index >= list.len() { return Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line)) }
+        //             pointer = &list[index];
+        //         },
+        //         _ => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(var_name), accessor.to_string(), context.current_line))
+        //     }
+        // }
+        // Ok(pointer.clone())
+    }
+    fn recursive_access(&self, accessors: &mut Vec<&str>, context: &Context, var_name: String) -> Result<Self, ChimeraRuntimeFailure> {
+        let accessor = match accessors.pop() {
+            Some(a) => a,
+            None => return Ok(self.clone())
+        };
+        let borrow = self.borrow(context)?;
+        match borrow.deref() {
+            Literal::Object(obj) => {
+                match obj.get(accessor) {
+                    Some(val) => val.recursive_access(accessors, context, var_name),
+                    None => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(var_name), accessor.to_string(), context.current_line))
+                }
+            },
+            Literal::List(list) => {
+                let index: usize = match accessor.parse() {
+                    Ok(i) => i,
+                    Err(_) => return Err(ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))
+                };
+                match list.get(index) {
+                    Some(val) => val.recursive_access(accessors, context, var_name),
+                    None => return Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line))
+                }
+            },
+            _ => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(var_name), accessor.to_string(), context.current_line))
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Literal {
     String(String),
     Number(NumberKind),
     Bool(bool),
     Null,
-    Object(HashMap<String, Rc<RefCell<Self>>>),
-    List(Vec<Rc<RefCell<Self>>>)
+    Object(HashMap<String, Data>),
+    List(Vec<Data>)
 }
 
-impl std::fmt::Display for Literal {
+impl Display for Literal {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        // TODO: Need to resolve this, this is a temporary hack
+        let fake_context = Context { current_line: 0 };
         match self {
             Literal::String(str) => write!(f, "{}", str),
             Literal::Number(num) => write!(f, "{}", num),
@@ -149,13 +260,17 @@ impl std::fmt::Display for Literal {
             Literal::Null => write!(f, "<null>"),
             Literal::Object(object) => {
                 for (key, val) in object.iter() {
-                    let val_string = val.to_string();
+                    let val_string = match val.borrow(&fake_context) {
+                        Ok(v) => v.to_string(),
+                        Err(_) => return Err(std::fmt::Error)
+                    };
                     write!(f, "{{\"{}\"}}\":\"{{{}}}\"", key, val_string)?;
                 }
                 Ok(())
             },
             Literal::List(list) => {
-                let list_as_str = list.into_iter().map(|c| c.to_string()).collect::<Vec<String>>().join(", ");
+                // TODO: Should NOT be using an unwrap, this has to be fixed
+                let list_as_str = list.into_iter().map(|c| c.borrow(&fake_context).unwrap().to_string()).collect::<Vec<String>>().join(", ");
                 write!(f, "[{}]", list_as_str)
             }
         }
@@ -179,45 +294,55 @@ impl From<Statement> for Literal {
 }
 
 impl Literal {
-    pub fn resolve_access(&self, mut accessors: Vec<&str>, context: &Context) -> Result<&Self, ChimeraRuntimeFailure> {
-        accessors.reverse();
-        let var_name = match accessors.len() {
-            0 => return Err(ChimeraRuntimeFailure::InternalError("resolving the access of a Literal".to_string())),
-            _ => accessors.pop().unwrap().to_owned()
-        };
-        let mut pointer = self;
-        while accessors.len() != 0 {
-            let accessor = accessors.pop().unwrap();
-            match pointer {
-                Literal::Object(obj) => {
-                    pointer = match obj.get(accessor) {
-                        Some(val) => val,
-                        None => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(var_name), accessor.to_string(), context.current_line))
-                    }
-                },
-                Literal::List(arr) => {
-                    let index: usize = match accessor.parse() {
-                        Ok(i) => i,
-                        Err(_) => return Err(ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))
-                    };
-                    if index >= arr.len() { return Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line)) }
-                    pointer = &arr[index];
-                },
-                _ => break
-            }
-        }
-        if accessors.len() > 0 {
-            return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(var_name), accessors[accessors.len() - 2].to_string(), context.current_line))
-        }
-        Ok(pointer)
-    }
+    // pub fn resolve_access(&self, mut accessors: Vec<&str>, context: &Context) -> Result<Data, ChimeraRuntimeFailure> {
+    //     accessors.reverse();
+    //     let var_name = match accessors.len() {
+    //         0 => return Err(ChimeraRuntimeFailure::InternalError("resolving the access of a Literal".to_string())),
+    //         _ => accessors.pop().unwrap().to_owned()
+    //     };
+    //     // Initialize our pointer with a dummy value as the compiler will stop us from initializing with an empty
+    //     // value, even though it _must_ be set as accessors.len() is always greater than 0 on the first loop
+    //     let mut pointer = Data::from_literal(self);
+    //     loop {
+    //         let accessor = match accessors.pop() {
+    //             Some(a) => a,
+    //             None =>
+    //         }
+    //     }
+    //
+    //     while accessors.len() != 0 {
+    //         let accessor = accessors.pop().unwrap();
+    //         let borrow = pointer.borrow()?;
+    //         match borrow.deref() {
+    //             Literal::Object(obj) => {
+    //                 pointer = match obj.get(accessor) {
+    //                     Some(val) => val,
+    //                     None => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(var_name), accessor.to_string(), context.current_line))
+    //                 }
+    //             },
+    //             Literal::List(arr) => {
+    //                 let index: usize = match accessor.parse() {
+    //                     Ok(i) => i,
+    //                     Err(_) => return Err(ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))
+    //                 };
+    //                 if index >= arr.len() { return Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line)) }
+    //                 pointer = &arr[index];
+    //             },
+    //             _ => break
+    //         }
+    //     }
+    //     if accessors.len() > 0 {
+    //         return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(var_name), accessors[accessors.len() - 2].to_string(), context.current_line))
+    //     }
+    //     Ok(pointer.clone())
+    // }
     pub fn to_number(&self) -> Option<NumberKind> {
         match self {
             Self::Number(i) => Some(*i),
             _ => None
         }
     }
-    fn to_list(&self) -> Option<&Vec<Rc<Self>>> {
+    fn to_list(&self) -> Option<&Vec<Data>> {
         match self {
             Self::List(list) => Some(list),
             _ => None
@@ -244,7 +369,7 @@ impl Literal {
         };
         return Err(ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::Unsigned, context.current_line))
     }
-    pub fn try_into_list(&self, came_from: &Value, context: &Context) -> Result<&Vec<Rc<Self>>, ChimeraRuntimeFailure> {
+    pub fn try_into_list(&self, came_from: &Value, context: &Context) -> Result<&Vec<Data>, ChimeraRuntimeFailure> {
         Ok(self.to_list().ok_or_else(|| return ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::List, context.current_line))?)
     }
     pub fn try_into_string(&self, came_from: &Value, context: &Context) -> Result<&str, ChimeraRuntimeFailure> {
@@ -289,18 +414,19 @@ impl <'de> Deserialize<'de> for Literal {
             }
             fn visit_seq<A>(self, mut visitor: A) -> Result<Self::Value, A::Error> where A: SeqAccess<'de> {
                 let mut vec = Vec::new();
-                while let Some(member) = visitor.next_element()? {
-                    vec.push(member)
+                while let Some(member) = visitor.next_element::<Literal>()? {
+                    vec.push(Data::from_literal(member))
                 }
                 Ok(Literal::List(vec))
             }
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error> where A: MapAccess<'de> {
                 match map.next_key()? {
                     Some(first_key) => {
-                        let mut values: HashMap<String, Rc<Literal>> = HashMap::new();
-                        values.insert(first_key, map.next_value()?);
-                        while let Some((key, value)) = map.next_entry()? {
-                            values.insert(key, value);
+                        let mut values: HashMap<String, Data> = HashMap::new();
+                        let first_value = map.next_value::<Literal>()?;
+                        values.insert(first_key, Data::from_literal(first_value));
+                        while let Some((key, value)) = map.next_entry::<String, Literal>()? {
+                            values.insert(key, Data::from_literal(value));
                         }
                         Ok(Literal::Object(values))
                     },

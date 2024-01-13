@@ -1,15 +1,14 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::ops::{Deref, DerefMut};
 use crate::variable_map::VariableMap;
-use crate::literal::{Literal, NumberKind};
+use crate::literal::{Literal, NumberKind, Data};
 use crate::abstract_syntax_tree::{Expression, HTTPVerb, ListExpression, ListCommandOperations, MutateListOperations};
-use crate::err_handle::ChimeraRuntimeFailure;
+use crate::err_handle::{ChimeraRuntimeFailure, VarTypes};
 use crate::frontend::Context;
 
-pub fn expression_command(context: &Context, expression: Expression, variable_map: &VariableMap, web_client: &reqwest::blocking::Client) -> Result<Rc<RefCell<Literal>>, ChimeraRuntimeFailure> {
+pub fn expression_command(context: &Context, expression: Expression, variable_map: &VariableMap, web_client: &reqwest::blocking::Client) -> Result<Data, ChimeraRuntimeFailure> {
     match expression {
-        Expression::LiteralExpression(literal) => { Ok(Rc::new(literal)) },
+        Expression::LiteralExpression(literal) => { Ok(Data::from_literal(literal)) },
         Expression::HttpCommand(http_command) => {
             let resolved_path = http_command.resolve_path(context, variable_map)?;
             // TODO: need to go through resolved_path and URL escape anything that has to be
@@ -22,7 +21,7 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
             let mut body_map: HashMap<String, String> = HashMap::new();
             for assignment in http_command.http_assignments {
                 let key = assignment.lhs;
-                let val = assignment.rhs.resolve(context, variable_map)?.to_string();
+                let val = assignment.rhs.resolve(context, variable_map)?.borrow(context)?.to_string();
                 body_map.insert(key, val);
             }
 
@@ -46,10 +45,10 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                     // Have to store the status here as reading the body consumes the response
                     let status_code: u64 = response.status().as_u16().try_into().expect("Failed to convert a u16 to a u64");
                     let body: Literal = response.json().unwrap_or_else(|_| Literal::Null);
-                    let mut http_response_obj: HashMap<String, Rc<Literal>> = HashMap::new();
-                    http_response_obj.insert("status_code".to_owned(), Rc::new(Literal::Number(NumberKind::U64(status_code))));
-                    http_response_obj.insert("body".to_owned(), Rc::new(body));
-                    Ok(Rc::new(Literal::Object(http_response_obj)))
+                    let mut http_response_obj: HashMap<String, Data> = HashMap::new();
+                    http_response_obj.insert("status_code".to_owned(), Data::from_literal(Literal::Number(NumberKind::U64(status_code))));
+                    http_response_obj.insert("body".to_owned(), Data::from_literal(body));
+                    Ok(Data::from_literal(Literal::Object(http_response_obj)))
                 },
                 Err(_) => Err(ChimeraRuntimeFailure::WebRequestFailure(resolved_path, context.current_line))
             }
@@ -57,51 +56,59 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
         Expression::ListExpression(list_expression) => {
             match list_expression {
                 ListExpression::New(new_list) => {
-                    let mut literal_list: Vec<Rc<Literal>> = Vec::new();
+                    let mut literal_list: Vec<Data> = Vec::new();
                     for value in new_list {
-                        let literal_val = value.resolve_to_literal(context, variable_map)?;
+                        let literal_val = value.resolve(context, variable_map)?;
                         literal_list.push(literal_val);
                     }
-                    Ok(Rc::new(Literal::List(literal_list)))
+                    Ok(Data::from_literal(Literal::List(literal_list)))
                 },
                 ListExpression::ListArgument(list_command) => {
                     match list_command.operation {
                         ListCommandOperations::MutateOperations(ref mutable_operation) => {
-                            let mut list_mut_ref = list_command.list_mut_ref(variable_map, context)?;
-                            // TODO: Should a clone be used in each arm? Can these clones be replaced with a ref?
-                            //       This kind of seems like the point of using an Rc
-                            match mutable_operation {
-                                MutateListOperations::Append(append_val) => {
-                                    let literal = Rc::new(append_val.resolve(context, variable_map)?.to_owned());
-                                    list_mut_ref.push(literal.clone());
-                                    Ok(literal)
-                                },
-                                MutateListOperations::Remove(remove_val) => {
-                                    match remove_val.resolve(context, variable_map)? {
-                                        Literal::Number(num) => {
-                                            let index = num.to_usize().ok_or_else(|| return ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))?;
-                                            if index >= list_mut_ref.len() {
-                                                return Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line))
-                                            }
-                                            Ok(list_mut_ref.remove(index))
+                            match variable_map.get_mut(context, list_command.list_name.as_str())?.deref_mut() {
+                                Literal::List(mutable_list) => {
+                                    // Cloning in these arms is fine, a clone on Data increments its underlying Rc count
+                                    // rather than actually copying the data
+                                    match mutable_operation {
+                                        MutateListOperations::Append(append_val) => {
+                                            let literal = append_val.resolve(context, variable_map)?;
+                                            mutable_list.push(literal.clone());
+                                            Ok(literal)
                                         },
-                                        _ => return Err(ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))
+                                        MutateListOperations::Remove(remove_val) => {
+                                            match remove_val.resolve(context, variable_map)?.borrow(context)?.deref() {
+                                                Literal::Number(num) => {
+                                                    let index = num.to_usize().ok_or_else(|| return ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))?;
+                                                    if index >= mutable_list.len() {
+                                                        return Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line))
+                                                    }
+                                                    Ok(mutable_list.remove(index))
+                                                },
+                                                _ => Err(ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))
+                                            }
+                                        },
+                                        MutateListOperations::Pop => {
+                                            match mutable_list.pop() {
+                                                Some(popped_val) => Ok(popped_val),
+                                                // Should this be a more precise error? OutOfBounds is technically correct
+                                                // but not precise, is it worth making a new error for this specific case?
+                                                None => Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line))
+                                            }
+                                        }
                                     }
                                 },
-                                MutateListOperations::Pop => {
-                                    match list_mut_ref.pop() {
-                                        Some(popped_val) => Ok(popped_val),
-                                        // Should this be a more precise error? OutOfBounds is technically correct
-                                        // but not precise, is it worth making a new error for this specific case?
-                                        None => Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line))
-                                    }
-                                }
+                                _ => Err(ChimeraRuntimeFailure::VarWrongType(list_command.list_name.clone(), VarTypes::List, context.current_line))
                             }
                         },
                         ListCommandOperations::Length => {
-                            let list = list_command.list_ref(variable_map, context)?;
-                            let list_len = Literal::Number(NumberKind::U64(list.len().try_into().expect("Failed to convert usize to u64")));
-                            Ok(Rc::new(list_len))
+                            match variable_map.get(context, list_command.list_name.as_str())?.borrow(context)?.deref() {
+                                Literal::List(list_ref) => {
+                                    let list_len = Data::from_literal(Literal::Number(NumberKind::U64(list_ref.len().try_into().expect("Failed to convert usize to u64"))));
+                                    Ok(list_len)
+                                },
+                                _ => Err(ChimeraRuntimeFailure::VarWrongType(list_command.list_name.clone(), VarTypes::List, context.current_line))
+                            }
                         }
                     }
                 }
