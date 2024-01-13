@@ -51,7 +51,8 @@ pub enum ChimeraRuntimeFailure {
     WebRequestFailure(String, i32),
     BadSubfieldAccess(Option<String>, String, i32),
     TriedToIndexWithNonNumber(i32),
-    OutOfBounds(i32)
+    OutOfBounds(i32),
+    BorrowError(i32, String)
 }
 
 impl Display for ChimeraRuntimeFailure {
@@ -74,7 +75,8 @@ impl Display for ChimeraRuntimeFailure {
                 }
             }
             ChimeraRuntimeFailure::TriedToIndexWithNonNumber(line) => write!(f, "ERROR on line {}: Arrays can only be indexed with an unsigned integer", line),
-            ChimeraRuntimeFailure::OutOfBounds(line) => write!(f, "ERROR on line {}: Tried to access an array with an out-of-bounds value", line)
+            ChimeraRuntimeFailure::OutOfBounds(line) => write!(f, "ERROR on line {}: Tried to access an array with an out-of-bounds value", line),
+            ChimeraRuntimeFailure::BorrowError(line, reason) => write!(f, "ERROR on line {}: {}", line, reason)
         }
     }
 }
@@ -90,6 +92,7 @@ impl PartialEq for ChimeraRuntimeFailure {
             ChimeraRuntimeFailure::BadSubfieldAccess(_, _, _) => { match other { ChimeraRuntimeFailure::BadSubfieldAccess(_, _, _) => true, _ => false } }
             ChimeraRuntimeFailure::TriedToIndexWithNonNumber(_) => { match other { ChimeraRuntimeFailure::TriedToIndexWithNonNumber(_) => true, _ => false } }
             ChimeraRuntimeFailure::OutOfBounds(_) => { match other { ChimeraRuntimeFailure::OutOfBounds(_) => true, _ => false } }
+            ChimeraRuntimeFailure::BorrowError(_, _) => match other { ChimeraRuntimeFailure::BorrowError(_, _) => true, _ => false }
         }
     }
 }
@@ -110,6 +113,7 @@ impl ChimeraRuntimeFailure {
             ChimeraRuntimeFailure::BadSubfieldAccess(_, _, _) => "BadSubfieldAccess",
             ChimeraRuntimeFailure::TriedToIndexWithNonNumber(_) => "TriedToIndexWithNonNumber",
             ChimeraRuntimeFailure::OutOfBounds(_) => "OutOfBounds",
+            ChimeraRuntimeFailure::BorrowError(_, _) => "BorrowError"
         }
     }
 }

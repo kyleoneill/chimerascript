@@ -1,10 +1,10 @@
-use std::collections::HashMap;
 use std::fmt::Formatter;
 use pest::iterators::Pair;
-use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure, VarTypes};
+use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure};
 use crate::frontend::{Rule, Context};
-use crate::literal::{Literal, NumberKind};
+use crate::literal::{Data, Literal, NumberKind};
 use crate::{frontend, WEB_REQUEST_DOMAIN};
+use crate::variable_map::VariableMap;
 
 // This has a return value despite only panicking so satisfy the compiler, as it's called inside of
 // `ok_or_else(|| no_pairs_panic())` closures which are meant to transform an Option into a Result.
@@ -522,6 +522,13 @@ pub enum Value {
     Variable(String)
 }
 
+impl std::str::FromStr for Value {
+    type Err = core::convert::Infallible;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self::Literal(Literal::String(s.to_string())))
+    }
+}
+
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -539,61 +546,22 @@ impl Value {
         }
     }
 
-    pub fn resolve(&self, context: &Context, variable_map: &HashMap<String, AssignmentValue>) -> Result<AssignmentValue, ChimeraRuntimeFailure> {
+    pub fn resolve(&self, context: &Context, variable_map: &VariableMap) -> Result<Data, ChimeraRuntimeFailure> {
         match self {
             Value::Literal(val) => {
-                Ok(AssignmentValue::Literal(val.clone()))
+                Ok(Data::from_literal(val.clone()))
             },
             Value::Variable(var_name) => {
                 let accessors: Vec<&str> = var_name.split(".").collect();
-                let value = match variable_map.get(accessors[0]) {
-                    Some(res) => res,
-                    None => return Err(ChimeraRuntimeFailure::VarNotFound(var_name.to_owned(), context.current_line))
-                };
-                // TODO: Is there a way to make this method return a ref? clone might be
-                //       expensive for large AssignmentValues, like for a big web response.
-                //       I think I want to use a Cow here, as that is used for enums that can
-                //       have variants which might be borrowed or owned. Applies for both what's returned from if
-                //       and else blocks
+                let value = variable_map.get(context, accessors[0])?;
                 if accessors.len() == 1 {
                     return Ok(value.clone())
                 }
                 else {
-                    match value {
-                        AssignmentValue::Literal(literal) => { Ok(AssignmentValue::Literal(literal.resolve_access(accessors, context)?.to_owned())) },
-                        AssignmentValue::HttpResponse(http_response) => {
-                            match accessors[1] {
-                                "status_code" => {
-                                    if accessors.len() != 2 {
-                                        return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(accessors[0].to_string()), accessors[2].to_string(), context.current_line))
-                                    }
-                                    Ok(AssignmentValue::Literal(Literal::Number(NumberKind::U64(http_response.status_code))))
-                                },
-                                "body" => {
-                                    let mut without_body_accessor = vec![accessors[0]];
-                                    if accessors.len() > 2 {
-                                        without_body_accessor.append(&mut accessors[2..].to_vec());
-                                    }
-                                    Ok(AssignmentValue::Literal(http_response.body.resolve_access(without_body_accessor, context)?.to_owned()))
-                                },
-                                _ => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(accessors[0].to_string()), accessors[1].to_string(), context.current_line))
-                            }
-                        }
-                    }
+                    Ok(value.resolve_access(accessors, context)?)
                 }
             }
         }
-    }
-
-    pub fn resolve_to_literal(&self, context: &Context, variable_map: &HashMap<String, AssignmentValue>) -> Result<Literal, ChimeraRuntimeFailure> {
-        match self.resolve(context, variable_map)? {
-            AssignmentValue::Literal(literal) => Ok(literal),
-            _ => Err(ChimeraRuntimeFailure::VarWrongType(self.error_print(), VarTypes::Literal, context.current_line))
-        }
-    }
-
-    pub fn value_from_str(input: &str) -> Self {
-        Self::Literal(Literal::String(input.to_owned()))
     }
 }
 
@@ -645,11 +613,11 @@ impl From<Statement> for HttpCommand {
 }
 
 impl HttpCommand {
-    pub fn resolve_path(&self, context: &Context, variable_map: &HashMap<String, AssignmentValue>) -> Result<String, ChimeraRuntimeFailure> {
+    pub fn resolve_path(&self, context: &Context, variable_map: &VariableMap) -> Result<String, ChimeraRuntimeFailure> {
         let domain = WEB_REQUEST_DOMAIN.get().expect("Failed to get static global domain when resolving an HTTP expression");
         let mut resolved_path: String = domain.clone();
         for portion in &self.path {
-            let resolved_portion = portion.resolve(context, variable_map)?.to_string();
+            let resolved_portion = portion.resolve(context, variable_map)?.borrow(context)?.to_string();
             resolved_path.push_str(resolved_portion.as_str());
         }
         Ok(resolved_path)
@@ -678,48 +646,6 @@ pub enum ListExpression {
 pub struct ListCommand {
     pub list_name: String,
     pub operation: ListCommandOperations
-}
-
-impl ListCommand {
-    pub fn list_ref<'a>(&'a self, variable_map: &'a HashMap<String, AssignmentValue>, context: &Context) -> Result<&Vec<Literal>, ChimeraRuntimeFailure> {
-        return match variable_map.get(self.list_name.as_str()) {
-            Some(ret) => {
-                match ret {
-                    AssignmentValue::Literal(lit) => {
-                        match lit {
-                            Literal::List(list) => {
-                                return Ok(list)
-                            }
-                            _ => ()
-                        }
-                    },
-                    _ => ()
-                }
-                Err(ChimeraRuntimeFailure::VarWrongType(self.list_name.clone(), VarTypes::List, context.current_line))
-            },
-            None => Err(ChimeraRuntimeFailure::VarNotFound(self.list_name.clone(), context.current_line))
-        }
-    }
-
-    pub fn list_mut_ref<'a>(&'a self, variable_map: &'a mut HashMap<String, AssignmentValue>, context: &Context) -> Result<&mut Vec<Literal>, ChimeraRuntimeFailure> {
-        return match variable_map.get_mut(self.list_name.as_str()) {
-            Some(ret) => {
-                match ret {
-                    AssignmentValue::Literal(lit) => {
-                        match lit {
-                            Literal::List(list) => {
-                                return Ok(list)
-                            }
-                            _ => ()
-                        }
-                    },
-                    _ => ()
-                }
-                Err(ChimeraRuntimeFailure::VarWrongType(self.list_name.clone(), VarTypes::List, context.current_line))
-            },
-            None => Err(ChimeraRuntimeFailure::VarNotFound(self.list_name.clone(), context.current_line))
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -755,37 +681,6 @@ pub enum HTTPVerb {
     DELETE
 }
 
-#[derive(Clone, PartialEq, Debug)]
-pub enum AssignmentValue {
-    Literal(Literal),
-    HttpResponse(HttpResponse)
-}
-
-impl std::fmt::Display for AssignmentValue {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AssignmentValue::Literal(literal) => write!(f, "{}", literal),
-            AssignmentValue::HttpResponse(res) => write!(f, "[HttpResponse status_code:{} body:{}]", res.status_code, res.body)
-        }
-    }
-}
-
-impl AssignmentValue {
-    pub fn to_literal(&self) -> Option<&Literal> {
-        match self {
-            Self::Literal(literal) => Some(literal),
-            _ => None
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub struct HttpResponse {
-    // TODO: Store header data?
-    pub status_code: u64,
-    pub body: Literal
-}
-
 /*
 -------------------------------------------------------------------------------------------------
 Here be testing
@@ -795,6 +690,7 @@ Here be testing
 #[cfg(test)]
 mod ast_tests {
     use pest::Parser;
+    use std::str::FromStr;
     use crate::frontend::CScriptTokenPairs;
     use super::*;
 
@@ -936,19 +832,19 @@ mod ast_tests {
         let http_commands: Vec<HttpCommand> = ["GET /foo/bar;", "PUT /foo;", "POST /foo;", "DELETE /foo;"].into_iter().map(|x| str_to_statement(x).into()).collect();
         assert_eq!(http_commands.len(), 4);
         assert_eq!(http_commands[0].verb, HTTPVerb::GET);
-        assert_eq!(http_commands[0].path, vec![Value::value_from_str("/foo/bar")]);
+        assert_eq!(http_commands[0].path, vec![Value::from_str("/foo/bar").unwrap()]);
         assert_eq!(http_commands[1].verb, HTTPVerb::PUT);
         assert_eq!(http_commands[2].verb, HTTPVerb::POST);
         assert_eq!(http_commands[3].verb, HTTPVerb::DELETE);
 
         let with_path_assignments: HttpCommand = str_to_statement("GET /foo/bar/baz?foo=5&another=\"bar\"&boolean=true;").into();
-        assert_eq!(with_path_assignments.path, vec![Value::value_from_str("/foo/bar/baz"), Value::value_from_str("?foo=5&another=\"bar\"&boolean=true")]);
+        assert_eq!(with_path_assignments.path, vec![Value::from_str("/foo/bar/baz").unwrap(), Value::from_str("?foo=5&another=\"bar\"&boolean=true").unwrap()]);
 
         // This HttpCommand has a path with args, assignments, and key/value pairs
         // Probably should make this more atomic though (test just assignment, then key/value, then multiple of each)
         let full_expression: HttpCommand = str_to_statement("GET /foo/bar/baz?foo=5&another=\"bar\" some_num=5 some_str=\"value\" timeout=>60 boolKey=>false;").into();
         assert_eq!(full_expression.verb, HTTPVerb::GET);
-        assert_eq!(full_expression.path, vec![Value::value_from_str("/foo/bar/baz"), Value::value_from_str("?foo=5&another=\"bar\"")]);
+        assert_eq!(full_expression.path, vec![Value::from_str("/foo/bar/baz").unwrap(), Value::from_str("?foo=5&another=\"bar\"").unwrap()]);
         assert_eq!(full_expression.http_assignments.len(), 2);
         assert_eq!(full_expression.http_assignments[0].lhs, "some_num".to_owned());
         assert_eq!(full_expression.http_assignments[0].rhs, Value::Literal(Literal::Number(NumberKind::U64(5))));
@@ -958,12 +854,12 @@ mod ast_tests {
 
         let endpoint_with_variable: HttpCommand = str_to_statement("GET /foo/beginning(some_var)end/(another_var)/ending?foo=5&bar=10;").into();
         assert_eq!(endpoint_with_variable.path.len(), 6);
-        assert_eq!(endpoint_with_variable.path[0], Value::value_from_str("/foo/beginning"));
+        assert_eq!(endpoint_with_variable.path[0], Value::from_str("/foo/beginning").unwrap());
         assert_eq!(endpoint_with_variable.path[1], Value::Variable("some_var".to_owned()));
-        assert_eq!(endpoint_with_variable.path[2], Value::value_from_str("end/"));
+        assert_eq!(endpoint_with_variable.path[2], Value::from_str("end/").unwrap());
         assert_eq!(endpoint_with_variable.path[3], Value::Variable("another_var".to_owned()));
-        assert_eq!(endpoint_with_variable.path[4], Value::value_from_str("/ending"));
-        assert_eq!(endpoint_with_variable.path[5], Value::value_from_str("?foo=5&bar=10"));
+        assert_eq!(endpoint_with_variable.path[4], Value::from_str("/ending").unwrap());
+        assert_eq!(endpoint_with_variable.path[5], Value::from_str("?foo=5&bar=10").unwrap());
     }
 
     #[test]
