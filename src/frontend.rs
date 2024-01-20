@@ -164,12 +164,12 @@ pub fn parse_main(input: &str) -> Result<Pairs<Rule>, ChimeraCompileError> {
 // TODO: Have to support running a test by name. Should just add a new function for it. Search an ast.functions
 //       for a test/nested-test of a given name and then run that test and its direct parents back to the top
 //       of the stack to the outermost test
-pub fn run_functions(ast: ChimeraScriptAST, web_client: &reqwest::blocking::Client) -> Vec<TestResult> {
+pub fn run_functions(ast: ChimeraScriptAST) -> Vec<TestResult> {
     let mut results: Vec<TestResult> = Vec::new();
     for function in ast.functions {
         if function.is_test_function() {
             let mut function_variables = VariableMap::new();
-            results.push(run_test_function(function, &mut function_variables, 0, web_client));
+            results.push(run_test_function(function, &mut function_variables, 0));
         }
     }
     results
@@ -184,7 +184,7 @@ pub fn print_in_function(thing: &impl Display, depth: usize) {
 
 // TODO: Should variable scoping be added? How will this impact the teardown stack (if teardown is added by called non-
 //       test functions)?
-pub fn run_test_function(function: Function, variable_map: &mut VariableMap, depth: usize, web_client: &reqwest::blocking::Client) -> TestResult {
+pub fn run_test_function(function: Function, variable_map: &mut VariableMap, depth: usize) -> TestResult {
     print_in_function(&format!("STARTING TEST - {}", function.name), depth);
     let timer = Timer::new();
     let mut context = Context::new();
@@ -202,7 +202,7 @@ pub fn run_test_function(function: Function, variable_map: &mut VariableMap, dep
 
     for block_contents in function.block {
         match block_contents {
-            BlockContents::Function(nested_function) => subtest_results.push(run_test_function(nested_function, variable_map, depth + 1, web_client)),
+            BlockContents::Function(nested_function) => subtest_results.push(run_test_function(nested_function, variable_map, depth + 1)),
             BlockContents::Teardown(mut teardown_block) => {
                 // TODO: Swap any Value::Variable uses in each statement for a Value::Literal to "stabilize" the
                 //       teardown statement against any variable changes during the test
@@ -218,14 +218,14 @@ pub fn run_test_function(function: Function, variable_map: &mut VariableMap, dep
                         crate::commands::assert::assert_command(&context, assert_command, variable_map)
                     },
                     Statement::AssignmentExpr(assert_expr) => {
-                        crate::commands::assignment::assignment_command(&context, assert_expr, variable_map, web_client)
+                        crate::commands::assignment::assignment_command(&context, assert_expr, variable_map)
                     },
                     Statement::PrintCommand(print_cmd) => {
                         crate::commands::print::print_command(&context, print_cmd, variable_map, depth)
                     },
                     Statement::Expression(expr) => {
                         // We are running an expression without assigning it, we can toss the result
-                        match crate::commands::expression::expression_command(&context, expr, variable_map, web_client) {
+                        match crate::commands::expression::expression_command(&context, expr, variable_map) {
                             Ok(_) => Ok(()),
                             Err(e) => Err(e)
                         }

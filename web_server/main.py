@@ -21,10 +21,10 @@ def test_resource():
     if request.method == "GET":
         first_query_param = request.args.get("first", None)
         second_query_param = request.args.get("second", None)
-        if first_query_param != None or second_query_param != None:
+        if first_query_param == None or second_query_param == None:
             return json.jsonify({"resource":example, "extras":{"first":first_query_param, "second":second_query_param}})
         else:
-            return json.jsonify(example)
+            return json.jsonify({"first":1,"second":True})
     elif request.method == "PUT":
         json_data = request.get_json()
         for thing in json_data:

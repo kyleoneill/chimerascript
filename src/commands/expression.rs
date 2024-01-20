@@ -1,57 +1,18 @@
-use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use crate::variable_map::VariableMap;
 use crate::literal::{Literal, NumberKind, Data};
-use crate::abstract_syntax_tree::{Expression, HTTPVerb, ListExpression, ListCommandOperations, MutateListOperations};
+use crate::abstract_syntax_tree::{Expression, ListExpression, ListCommandOperations, MutateListOperations};
 use crate::err_handle::{ChimeraRuntimeFailure, VarTypes};
 use crate::frontend::Context;
+use crate::CLIENT;
 
-pub fn expression_command(context: &Context, expression: Expression, variable_map: &VariableMap, web_client: &reqwest::blocking::Client) -> Result<Data, ChimeraRuntimeFailure> {
+pub fn expression_command(context: &Context, expression: Expression, variable_map: &VariableMap) -> Result<Data, ChimeraRuntimeFailure> {
     match expression {
         Expression::LiteralExpression(literal) => { Ok(Data::from_literal(literal)) },
         Expression::HttpCommand(http_command) => {
-            let resolved_path = http_command.resolve_path(context, variable_map)?;
-            // TODO: need to go through resolved_path and URL escape anything that has to be
-            //       escaped, ex space has to be replaced with %20
-            // TODO: need to go through resolved_path and fill in any variable query params, ex
-            //       - GET /foo?count=(my_count_var)
-            //       See the to do in abstract_syntax_tree::parse_rule_to_path about this
-
-            // construct request body
-            let mut body_map: HashMap<String, String> = HashMap::new();
-            for assignment in http_command.http_assignments {
-                let key = assignment.lhs;
-                let val = assignment.rhs.resolve(context, variable_map)?.borrow(context)?.to_string();
-                body_map.insert(key, val);
-            }
-
-            // Make the web request
-            let res = match http_command.verb {
-                HTTPVerb::GET => {
-                    web_client.get(resolved_path.as_str()).send()
-                },
-                HTTPVerb::DELETE => {
-                    web_client.delete(resolved_path.as_str()).send()
-                },
-                HTTPVerb::POST => {
-                    web_client.post(resolved_path.as_str()).json(&body_map).send()
-                },
-                HTTPVerb::PUT => {
-                    web_client.put(resolved_path.as_str()).json(&body_map).send()
-                }
-            };
-            match res {
-                Ok(response) => {
-                    // Have to store the status here as reading the body consumes the response
-                    let status_code: u64 = response.status().as_u16().try_into().expect("Failed to convert a u16 to a u64");
-                    let body: Literal = response.json().unwrap_or_else(|_| Literal::Null);
-                    let mut http_response_obj: HashMap<String, Data> = HashMap::new();
-                    http_response_obj.insert("status_code".to_owned(), Data::from_literal(Literal::Number(NumberKind::U64(status_code))));
-                    http_response_obj.insert("body".to_owned(), Data::from_literal(body));
-                    Ok(Data::from_literal(Literal::Object(http_response_obj)))
-                },
-                Err(_) => Err(ChimeraRuntimeFailure::WebRequestFailure(resolved_path, context.current_line))
-            }
+            let client = CLIENT.get().expect("Failed to get web client while resolving an http command");
+            let res_obj = client.make_request(context, http_command, variable_map)?;
+            Ok(Data::from_literal(res_obj))
         },
         Expression::ListExpression(list_expression) => {
             match list_expression {

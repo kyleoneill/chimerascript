@@ -10,6 +10,7 @@ mod variable_map;
 use err_handle::print_error;
 use frontend::ResultCount;
 use util::Timer;
+use util::{WebClient, RealClient};
 
 extern crate reqwest;
 extern crate serde;
@@ -35,7 +36,8 @@ struct Args {
     name: Option<String>
 }
 
-static WEB_REQUEST_DOMAIN: OnceLock<String> = OnceLock::new();
+static CLIENT: OnceLock<&(dyn WebClient + Sync)> = OnceLock::new();
+static REAL_CLIENT: OnceLock<RealClient> = OnceLock::new();
 
 fn system_checks() {
     if !cfg!(target_pointer_width = "64") {
@@ -70,21 +72,22 @@ fn main() {
         }
     };
 
+    // Set the domain for our web requests. The value held by the OnceLock must have a static
+    // lifetime, so the client must be placed into its own OnceLock. A little hacky, but functional.
+    // The purpose of CLIENT is so the web client can be mocked by tests
     // TODO: make a client builder here, configure it, then build the client
-    // TODO: I should use a global to store the web client so I can access it from
-    //       anywhere without passing it through a bunch of functions that don't need it.
-    //       See what was done a few lines below for the domain.
-    //       Will need to figure out if we want the client to be set once here like the domain
-    //       or modified later at some point, ex like changing the timeout it uses for a request
-    let web_client = reqwest::blocking::Client::new();
-    // Set the domain for our web requests
-    // TODO: Set this from a config value
-    WEB_REQUEST_DOMAIN.set("http://127.0.0.1:5000".to_owned()).expect("Failed to set static global for web domain");
+    // TODO: Set domain from a config file
+    let client = RealClient::new("http://127.0.0.1:5000".to_owned(), reqwest::blocking::Client::new());
+    REAL_CLIENT.set(client).expect("Failed to set up web client");
+    match CLIENT.set(REAL_CLIENT.get().unwrap()) {
+        Ok(_) => (),
+        Err(_) => panic!("Failed to set up web client")
+    }
 
     match ChimeraScriptAST::new(file_contents.as_str()) {
         Ok(ast) => {
             let timer = Timer::new();
-            let test_results = frontend::run_functions(ast, &web_client);
+            let test_results = frontend::run_functions(ast);
             let run_time = timer.finish();
             ResultCount::print_test_result(test_results, Some(run_time.as_str()));
         },
