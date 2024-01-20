@@ -89,7 +89,6 @@ mod testing {
         // This is needed to do setup that each test needs, running it multiple times causes a panic
         INIT.call_once(|| {
             FAKE_CLIENT.set(FakeClient::new("http://127.0.0.1:5000")).unwrap();
-            //FAKE_CLIENT.set(RealClient::new("http://127.0.0.1:5000".to_owned(), reqwest::blocking::Client::new())).unwrap();
             match CLIENT.set(FAKE_CLIENT.get().unwrap()) {
                 Ok(_) => (),
                 Err(_) => panic!("Failed to set fake client during test init")
