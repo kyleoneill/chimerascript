@@ -1,32 +1,100 @@
 #[cfg(test)]
 mod testing {
+    use std::collections::HashMap;
     use std::fs;
     use std::path::Path;
-    use std::sync::{OnceLock, Once};
-    use reqwest::blocking::Client;
-    use crate::frontend::{run_functions, TestResult};
-    use crate::WEB_REQUEST_DOMAIN;
-    use crate::abstract_syntax_tree::ChimeraScriptAST;
+    use std::sync::{Once, OnceLock};
+    use crate::frontend::{Context, run_functions, TestResult};
+    use crate::CLIENT;
+    use crate::abstract_syntax_tree::{ChimeraScriptAST, HttpCommand, HTTPVerb};
     use crate::err_handle::{ChimeraRuntimeFailure, VarTypes};
+    use crate::literal::{Data, Literal, NumberKind};
+    use crate::util::WebClient;
+    use crate::variable_map::VariableMap;
+
+    #[derive(Debug)]
+    struct FakeClient {
+        domain: String
+    }
+
+    impl FakeClient {
+        pub fn new(s: &str) -> Self {
+            let domain = s.to_owned();
+            Self { domain }
+        }
+    }
+
+    impl WebClient for FakeClient {
+        fn get_domain(&self) -> &str {
+            self.domain.as_str()
+        }
+        fn make_request(&self, context: &Context, http_command: HttpCommand, variable_map: &VariableMap) -> Result<Literal, ChimeraRuntimeFailure> {
+            let mut response_obj: HashMap<String, Data> = HashMap::new();
+            response_obj.insert("status_code".to_owned(), Data::from_literal(Literal::Number(NumberKind::U64(match http_command.verb {
+                HTTPVerb::GET => 200,
+                HTTPVerb::DELETE => 200,
+                HTTPVerb::POST => 201,
+                HTTPVerb::PUT => 200
+            }))));
+
+            let mut resolved_body: HashMap<String, Data> = HashMap::new();
+            for assignment in &http_command.http_assignments {
+                let key = assignment.lhs.clone();
+                let value = assignment.rhs.resolve(context, variable_map)?;
+                resolved_body.insert(key, value);
+            }
+            let resolved_path = http_command.resolve_path(context, variable_map)?;
+            let mut query_params: HashMap<String, String> = HashMap::new();
+            let mut split = resolved_path.split("?");
+            split.next().unwrap();
+            match split.next() {
+                Some(next) => {
+                    let second_split = next.split("&");
+                    for thing in second_split {
+                        let mut third_split = thing.split("=");
+                        let key = third_split.next().unwrap().to_owned();
+                        let value = third_split.next().unwrap().to_owned();
+                        query_params.insert(key, value);
+                    }
+                },
+                None => ()
+            }
+
+            let body_res: Literal = if resolved_body.is_empty() && query_params.is_empty() {
+                Literal::Null
+            }
+            else {
+                let mut body_map: HashMap<String, Data> = HashMap::new();
+                for (k, v) in query_params {
+                    body_map.insert(k, Data::from_literal(serde_json::from_str::<Literal>(v.as_str()).unwrap()));
+                }
+                for (k, v) in resolved_body {
+                    body_map.insert(k, v);
+                }
+                Literal::Object(body_map)
+            };
+
+            response_obj.insert("body".to_owned(), Data::from_literal(body_res));
+            Ok(Literal::Object(response_obj))
+        }
+    }
 
     static INIT: Once = Once::new();
+    // turn this into a oncelock, the init will set if it hasn't been set yet
 
-    static WEB_CLIENT: OnceLock<Client> = OnceLock::new();
+    static FAKE_CLIENT: OnceLock<FakeClient> = OnceLock::new();
 
-    // TODO: Tests currently rely on there being a local server running which requests are made
-    //       against. Would be a lot better to have some sort of test harness which "captured"
-    //       the requests being made and providing the expected response, so the use of a server
-    //       is avoided. The Client being passed in should be mocked so real http requests are not
-    //       made when running tests
-
-    fn initialize() -> &'static Client {
+    fn initialize() {
         // The `INIT: Once` will "lock" this part of the function so its logic can only ever be run once
         // This is needed to do setup that each test needs, running it multiple times causes a panic
         INIT.call_once(|| {
-            WEB_REQUEST_DOMAIN.set("http://127.0.0.1:5000".to_owned()).unwrap();
-            WEB_CLIENT.set(Client::new()).unwrap();
+            FAKE_CLIENT.set(FakeClient::new("http://127.0.0.1:5000")).unwrap();
+            //FAKE_CLIENT.set(RealClient::new("http://127.0.0.1:5000".to_owned(), reqwest::blocking::Client::new())).unwrap();
+            match CLIENT.set(FAKE_CLIENT.get().unwrap()) {
+                Ok(_) => (),
+                Err(_) => panic!("Failed to set fake client during test init")
+            }
         });
-        WEB_CLIENT.get().expect("Failed to get Client")
     }
 
     fn read_cs_file(filename: &str) -> ChimeraScriptAST {
@@ -39,9 +107,9 @@ mod testing {
     }
 
     fn results_from_filename(filename: &str) -> Vec<TestResult> {
-        let client = initialize();
+        initialize();
         let ast = read_cs_file(filename);
-        run_functions(ast, client)
+        run_functions(ast)
     }
 
     fn assert_test_pass(result: &TestResult, filename: &str, while_doing: &str) {
@@ -90,11 +158,11 @@ mod testing {
     #[test]
     /// Test the simplest possible .ch, an assertion that 1 == 1
     fn simple_assertion() {
-        let client = initialize();
+        initialize();
         let filename = "simplest_test.chs";
         let ast = read_cs_file(filename);
         assert_eq!(ast.functions.len(), 1, "Should only get a single test for a test file which contains one test case but got multiple");
-        let res = run_functions(ast, client);
+        let res = run_functions(ast);
         assert_eq!(res.len(), 1, "Expected to get a single test result when running a chs file with one test case");
         assert_eq!(res[0].subtest_results.len(), 0, "Test case {} of file {} should have 0 subtests", res[0].test_name(), filename);
         assert_test_pass(&res[0], filename, "when asserting that 1 == 1");

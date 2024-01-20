@@ -1,9 +1,10 @@
+use std::collections::HashMap;
 use std::fmt::Formatter;
 use pest::iterators::Pair;
 use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure};
 use crate::frontend::{Rule, Context};
 use crate::literal::{Data, Literal, NumberKind};
-use crate::{frontend, WEB_REQUEST_DOMAIN};
+use crate::{frontend, CLIENT};
 use crate::variable_map::VariableMap;
 
 // This has a return value despite only panicking so satisfy the compiler, as it's called inside of
@@ -614,13 +615,27 @@ impl From<Statement> for HttpCommand {
 
 impl HttpCommand {
     pub fn resolve_path(&self, context: &Context, variable_map: &VariableMap) -> Result<String, ChimeraRuntimeFailure> {
-        let domain = WEB_REQUEST_DOMAIN.get().expect("Failed to get static global domain when resolving an HTTP expression");
-        let mut resolved_path: String = domain.clone();
+        let client = CLIENT.get().expect("Failed to get web client while resolving an HTTP expression");
+        let mut resolved_path: String = client.get_domain().to_owned();
         for portion in &self.path {
             let resolved_portion = portion.resolve(context, variable_map)?.borrow(context)?.to_string();
             resolved_path.push_str(resolved_portion.as_str());
         }
+        // TODO: need to go through resolved_path and URL escape anything that has to be
+        //       escaped, ex space has to be replaced with %20
+        // TODO: need to go through resolved_path and fill in any variable query params, ex
+        //       - GET /foo?count=(my_count_var)
+        //       See the to do in abstract_syntax_tree::parse_rule_to_path about this
         Ok(resolved_path)
+    }
+    pub fn resolve_body(&self, context: &Context, variable_map: &VariableMap) -> Result<HashMap<String, String>, ChimeraRuntimeFailure> {
+        let mut body_map: HashMap<String, String> = HashMap::new();
+        for assignment in &self.http_assignments {
+            let key = assignment.lhs.clone();
+            let value = assignment.rhs.resolve(context, variable_map)?.borrow(context)?.to_string();
+            body_map.insert(key, value);
+        }
+        Ok(body_map)
     }
 }
 

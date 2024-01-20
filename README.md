@@ -15,13 +15,13 @@ case my-test() {
 }
 ```
 
-## Test Case Structure
-Test cases take the structure of `case FUNCTION_NAME() { FUNCTION_STEPS }`. A test case can
-also be marked with comma separated decorators above the function name. The `[test]` decorator
-marks a test to be run automatically when a .chs file is ran. Lines inside a case/function block
-use a semicolon as a statement terminator.
+## Syntax
+Functions take the structure of `case FUNCTION_NAME() { FUNCTION_STEPS }`. A function can
+be marked with comma separated decorators above the function name. The `[test]` decorator
+marks a function as a test to be run automatically when a .chs file is ran. Statements inside a
+function block are semicolon terminated.
 
-Cases/functions without a `[test]` decorator which are not nested will be used for a future feature
+Functions without a `[test]` decorator and which are not nested will be used for a future feature
 where functions can be called from within a test, for purposes such as test initialization.
 
 ## Test Case Nesting
