@@ -16,12 +16,7 @@ pub fn assert_command(context: &Context, assert_command: &AssertCommand, variabl
             let vec = left_data.try_into_list(assert_command.left_value.error_print(), context)?;
             vec.len() == assert_len
         },
-        AssertSubCommand::EQUALS => {
-            // TODO: Should support checking equality for collection types as well
-            let left_lit = left_data.try_into_literal(&assert_command.left_value, context)?;
-            let right_lit = right_data.try_into_literal(&assert_command.right_value, context)?;
-            left_lit == right_lit
-        },
+        AssertSubCommand::EQUALS => left_data.deref() == right_data.deref(),
         AssertSubCommand::STATUS => {
             let res = match left_data.deref() {
                 DataKind::Collection(c) => match c {

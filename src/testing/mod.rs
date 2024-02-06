@@ -293,7 +293,7 @@ mod testing {
         assert_eq!(res.len(), 6);
 
         // Test general list functionality
-        assert_eq!(res[0].subtest_results.len(), 9);
+        assert_eq!(res[0].subtest_results.len(), 10);
         assert_test_pass(&res[0], filename, "when making a new list");
         assert_test_pass(&res[0].subtest_results[0], filename, "when getting a list length");
         assert_test_pass(&res[0].subtest_results[1], filename, "when making an empty list");
@@ -304,6 +304,7 @@ mod testing {
         assert_test_pass(&res[0].subtest_results[6], filename, "when using LENGTH assertion on a list");
         assert_test_pass(&res[0].subtest_results[7], filename, "when using CONTAINS assertion on a list");
         assert_test_pass(&res[0].subtest_results[8], filename, "when popping from a list");
+        assert_test_pass(&res[0].subtest_results[9], filename, "when checking equality between lists");
 
         // Remove a value from list out of bounds
         assert_test_fail(&res[1], filename, "when removing a value from a list with an out-of-bounds index", ChimeraRuntimeFailure::OutOfBounds(0));
