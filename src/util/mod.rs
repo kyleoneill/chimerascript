@@ -5,12 +5,12 @@ use reqwest;
 use crate::abstract_syntax_tree::{HttpCommand, HTTPVerb};
 use crate::err_handle::ChimeraRuntimeFailure;
 use crate::frontend::Context;
-use crate::literal::{Data, Literal, NumberKind};
+use crate::literal::{Collection, Data, DataKind, Literal, NumberKind};
 use crate::variable_map::VariableMap;
 
 pub trait WebClient {
     fn get_domain(&self) -> &str;
-    fn make_request(&self, context: &Context, http_command: HttpCommand, variable_map: &VariableMap) -> Result<Literal, ChimeraRuntimeFailure>;
+    fn make_request(&self, context: &Context, http_command: HttpCommand, variable_map: &VariableMap) -> Result<DataKind, ChimeraRuntimeFailure>;
 }
 
 #[derive(Debug)]
@@ -29,7 +29,7 @@ impl WebClient for RealClient {
     fn get_domain(&self) -> &str {
         self.domain.as_str()
     }
-    fn make_request(&self, context: &Context, http_command: HttpCommand, variable_map: &VariableMap) -> Result<Literal, ChimeraRuntimeFailure> {
+    fn make_request(&self, context: &Context, http_command: HttpCommand, variable_map: &VariableMap) -> Result<DataKind, ChimeraRuntimeFailure> {
         let resolved_path = http_command.resolve_path(context, variable_map)?;
         let body_map = http_command.resolve_body(context, variable_map)?;
 
@@ -52,11 +52,11 @@ impl WebClient for RealClient {
             Ok(response) => {
                 // Have to store the status here as reading the body consumes the response
                 let status_code: u64 = response.status().as_u16().try_into().expect("Failed to convert a u16 to a u64");
-                let body: Literal = response.json().unwrap_or_else(|_| Literal::Null);
+                let body: DataKind = response.json().unwrap_or_else(|_| DataKind::Literal(Literal::Null));
                 let mut http_response_obj: HashMap<String, Data> = HashMap::new();
                 http_response_obj.insert("status_code".to_owned(), Data::from_literal(Literal::Number(NumberKind::U64(status_code))));
-                http_response_obj.insert("body".to_owned(), Data::from_literal(body));
-                Ok(Literal::Object(http_response_obj))
+                http_response_obj.insert("body".to_owned(), Data::new(body));
+                Ok(DataKind::Collection(Collection::Object(http_response_obj)))
             },
             Err(_) => Err(ChimeraRuntimeFailure::WebRequestFailure(resolved_path, context.current_line))
         }

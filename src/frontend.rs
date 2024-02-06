@@ -215,7 +215,7 @@ pub fn run_test_function(function: Function, variable_map: &mut VariableMap, dep
                 // If we have any other runtime error, just return the error
                 let statement_result = match statement {
                     Statement::AssertCommand(assert_command) => {
-                        crate::commands::assert::assert_command(&context, assert_command, variable_map)
+                        crate::commands::assert::assert_command(&context, &assert_command, variable_map)
                     },
                     Statement::AssignmentExpr(assert_expr) => {
                         crate::commands::assignment::assignment_command(&context, assert_expr, variable_map)

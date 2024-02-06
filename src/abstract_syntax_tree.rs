@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use std::fmt::Formatter;
+use std::ops::Deref;
 use pest::iterators::Pair;
-use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure};
+use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure, VarTypes};
 use crate::frontend::{Rule, Context};
-use crate::literal::{Data, Literal, NumberKind};
+use crate::literal::{Data, DataKind, Literal, NumberKind};
 use crate::{frontend, CLIENT};
 use crate::variable_map::VariableMap;
 
@@ -405,9 +406,6 @@ impl ChimeraScriptAST {
                                 match command_token.as_str() {
                                     "APPEND" => ListCommandOperations::MutateOperations(MutateListOperations::Append(value)),
                                     "REMOVE" => ListCommandOperations::MutateOperations(MutateListOperations::Remove(value)),
-                                    // TODO: I think the compile error here and the one in the below None block (and in number processing)
-                                    //       are the only ones that a user can ever _actually_ reach, might want to replace the rest of
-                                    //       the ChimeraCompileError's in this file with panics
                                     _ => return Err(ChimeraCompileError::new("Invalid list command when using a value", command_token.line_col()))
                                 }
                             },
@@ -618,8 +616,12 @@ impl HttpCommand {
         let client = CLIENT.get().expect("Failed to get web client while resolving an HTTP expression");
         let mut resolved_path: String = client.get_domain().to_owned();
         for portion in &self.path {
-            let resolved_portion = portion.resolve(context, variable_map)?.borrow(context)?.to_string();
-            resolved_path.push_str(resolved_portion.as_str());
+            match portion.resolve(context, variable_map)?.borrow(context)?.deref() {
+                DataKind::Literal(literal) => {
+                    resolved_path.push_str(literal.to_string().as_str())
+                },
+                DataKind::Collection(_) => return Err(ChimeraRuntimeFailure::VarWrongType(portion.error_print(), VarTypes::Literal, context.current_line))
+            }
         }
         // TODO: need to go through resolved_path and URL escape anything that has to be
         //       escaped, ex space has to be replaced with %20
