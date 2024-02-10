@@ -35,9 +35,9 @@ pub fn expression_command(context: &Context, expression: Expression, variable_ma
                                             // rather than actually copying the data
                                             match mutable_operation {
                                                 MutateListOperations::Append(append_val) => {
-                                                    let literal = append_val.resolve(context, variable_map)?;
-                                                    mutable_list.push(literal.clone());
-                                                    Ok(literal)
+                                                    let data = append_val.resolve(context, variable_map)?;
+                                                    mutable_list.push(data.clone());
+                                                    Ok(data)
                                                 },
                                                 MutateListOperations::Remove(remove_val) => {
                                                     let index = match remove_val
