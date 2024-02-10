@@ -37,7 +37,7 @@ impl Display for VarTypes {
             VarTypes::HttpResponse => write!(f, "HttpResponse"),
             VarTypes::List => write!(f, "List"),
             VarTypes::Containable => write!(f, "List or Object"),
-            VarTypes::Literal => write!(f, "null, number, bool, string, array, or object")
+            VarTypes::Literal => write!(f, "Literal (number, bool, string, or null)")
         }
     }
 }

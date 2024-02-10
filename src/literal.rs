@@ -131,7 +131,7 @@ impl NumberKind {
 
 #[derive(Debug)]
 pub struct Data {
-    handle: Rc<RefCell<Literal>>
+    handle: Rc<RefCell<DataKind>>
 }
 
 impl Clone for Data {
@@ -140,27 +140,17 @@ impl Clone for Data {
     }
 }
 
-impl PartialEq for Data {
-    fn eq(&self, other: &Self) -> bool {
-        // TODO: This will panic if the handle has a mutable borrow out
-        //       I don't _think_ this is currently possible, but this must be changed
-        //       to guard against future changes.
-        // Realistically, the fix here is to probably break Literal down further to have some schema that looks like
-        // Handle: Rc<RefCell<Data>>
-        // Data: enum of Literal and Collectible
-        // Literal: enum of String, Number, Bool, Null
-        // Collectible: enum of List and Object
-        // Will then need to swap over the derive de-serialize to go into Data
-        // This will be another major refactor but likely necessary
-        self.handle.borrow().deref() == other.handle.borrow().deref()
-    }
-}
-
 impl Data {
-    pub fn from_literal(lit: Literal) -> Self {
-        Self { handle: Rc::new(RefCell::new(lit)) }
+    pub fn new(data_kind: DataKind) -> Self {
+        Self { handle: Rc::new(RefCell::new(data_kind)) }
     }
-    pub fn borrow(&self, context: &Context) -> Result<Ref<Literal>, ChimeraRuntimeFailure> {
+    pub fn from_literal(lit: Literal) -> Self {
+        Self { handle: Rc::new(RefCell::new(DataKind::Literal(lit))) }
+    }
+    pub fn from_vec(v: Vec<Data>) -> Self {
+        Self { handle: Rc::new(RefCell::new(DataKind::Collection(Collection::List(v)))) }
+    }
+    pub fn borrow(&self, context: &Context) -> Result<Ref<DataKind>, ChimeraRuntimeFailure> {
         match self.handle.try_borrow() {
             // Must return a Ref<T> here, returning a Ref<T>::deref() will error.
             // This happens because RefCell<T>::try_borrow returns a Ref<T> with the lifetime of the &self passed into
@@ -171,7 +161,7 @@ impl Data {
             Err(_) => Err(ChimeraRuntimeFailure::BorrowError(context.current_line, "Cannot borrow a variable when it has a mutable reference in use".to_owned()))
         }
     }
-    pub fn borrow_mut(&self, context: &Context) -> Result<RefMut<Literal>, ChimeraRuntimeFailure> {
+    pub fn borrow_mut(&self, context: &Context) -> Result<RefMut<DataKind>, ChimeraRuntimeFailure> {
         match self.handle.try_borrow_mut() {
             Ok(d) => Ok(d),
             Err(_) => Err(ChimeraRuntimeFailure::BorrowError(context.current_line, "Cannot borrow a variable mutably when it already has a reference in use".to_owned()))
@@ -192,23 +182,194 @@ impl Data {
         };
         let borrow = self.borrow(context)?;
         match borrow.deref() {
-            Literal::Object(obj) => {
-                match obj.get(accessor) {
-                    Some(val) => val.recursive_access(accessors, context, var_name),
-                    None => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(var_name), accessor.to_string(), context.current_line))
+            DataKind::Collection(c) => match c {
+                Collection::Object(obj) => {
+                    match obj.get(accessor) {
+                        Some(val) => val.recursive_access(accessors, context, var_name),
+                        None => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(var_name), accessor.to_string(), context.current_line))
+                    }
+                },
+                Collection::List(list) => {
+                    let index: usize = match accessor.parse() {
+                        Ok(i) => i,
+                        Err(_) => return Err(ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))
+                    };
+                    match list.get(index) {
+                        Some(val) => val.recursive_access(accessors, context, var_name),
+                        None => return Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line))
+                    }
                 }
             },
-            Literal::List(list) => {
-                let index: usize = match accessor.parse() {
-                    Ok(i) => i,
-                    Err(_) => return Err(ChimeraRuntimeFailure::TriedToIndexWithNonNumber(context.current_line))
-                };
-                match list.get(index) {
-                    Some(val) => val.recursive_access(accessors, context, var_name),
-                    None => return Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line))
+            DataKind::Literal(_) => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(var_name), accessor.to_string(), context.current_line))
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum DataKind {
+    Literal(Literal),
+    Collection(Collection)
+}
+
+impl Display for DataKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DataKind::Collection(c) => write!(f, "{}", c.to_string()),
+            DataKind::Literal(l) => write!(f, "{}", l.to_string())
+        }
+    }
+}
+
+impl PartialEq for DataKind {
+    fn eq(&self, other: &Self) -> bool {
+        match self {
+            Self::Collection(self_c) => {
+                match other {
+                    Self::Collection(other_c) => self_c == other_c,
+                    _ => false
                 }
             },
-            _ => return Err(ChimeraRuntimeFailure::BadSubfieldAccess(Some(var_name), accessor.to_string(), context.current_line))
+            Self::Literal(self_l) => {
+                match other {
+                    Self::Literal(other_l) => self_l == other_l,
+                    _ => false
+                }
+            }
+        }
+    }
+}
+
+impl DataKind {
+    pub fn to_number(&self) -> Option<NumberKind> {
+        match self {
+            Self::Collection(_) => None,
+            Self::Literal(literal) => literal.to_number()
+        }
+    }
+    fn to_list(&self) -> Option<&Vec<Data>> {
+        match self {
+            Self::Collection(c) => c.to_list(),
+            _ => None
+        }
+    }
+    // TODO: Some of these try_into's take a Value and some take a String for came_from,
+    //       this should be made consistent
+    //       https://github.com/kyleoneill/chimerascript/issues/33
+    pub fn try_into_literal(&self, came_from: &Value, context: &Context) -> Result<&Literal, ChimeraRuntimeFailure> {
+        match self {
+            Self::Literal(literal) => Ok(literal),
+            Self::Collection(_) => Err(ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::Literal, context.current_line))
+        }
+    }
+    pub fn try_into_number_kind(&self, came_from: &Value, context: &Context) -> Result<NumberKind, ChimeraRuntimeFailure> {
+        Ok(self.to_number().ok_or_else(|| return ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::Number, context.current_line))?)
+    }
+    pub fn try_into_usize(&self, came_from: &Value, context: &Context) -> Result<usize, ChimeraRuntimeFailure> {
+        let number_kind = self.try_into_number_kind(came_from, context)?;
+        number_kind.try_into_usize(came_from, context)
+    }
+    pub fn try_into_u64(&self, came_from: &Value, context: &Context) -> Result<u64, ChimeraRuntimeFailure> {
+        if let Some(number) = self.to_number() {
+            if let NumberKind::U64(unsigned) = number {
+                return Ok(unsigned)
+            }
+        };
+        return Err(ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::Unsigned, context.current_line))
+    }
+    pub fn try_into_list(&self, came_from: String, context: &Context) -> Result<&Vec<Data>, ChimeraRuntimeFailure> {
+        Ok(self.to_list().ok_or_else(|| return ChimeraRuntimeFailure::VarWrongType(came_from, VarTypes::List, context.current_line))?)
+    }
+    pub fn try_into_string(&self, came_from: String, context: &Context) -> Result<&str, ChimeraRuntimeFailure> {
+        let attempt = match self {
+            Self::Literal(literal) => literal.to_str(),
+            Self::Collection(_) => None
+        };
+        Ok(attempt.ok_or_else(|| return ChimeraRuntimeFailure::VarWrongType(came_from, VarTypes::String, context.current_line))?)
+    }
+}
+
+#[derive(Debug)]
+pub enum Collection {
+    Object(HashMap<String, Data>),
+    List(Vec<Data>)
+}
+
+impl PartialEq for Collection {
+    fn eq(&self, other: &Self) -> bool {
+        // TODO: https://github.com/kyleoneill/chimerascript/issues/33
+        // borrow() should not need to take context
+        let fake_context = Context { current_line: 0 };
+        match self {
+            Self::Object(self_obj) => {
+                match other {
+                    Self::Object(other_obj) => {
+                        if self_obj.len() != other_obj.len() { return false };
+                        self_obj.iter().all(|(key, value)| other_obj.get(key).map_or(false, |v| v.borrow(&fake_context).expect("Failed to borrow object member").deref() == value.borrow(&fake_context).expect("Failed to borrow object member").deref()))
+                    },
+                    _ => false
+                }
+            },
+            Self::List(self_list) => {
+                match other {
+                    Self::List(other_list) => {
+                        if self_list.len() != other_list.len() { return false };
+                        (0..self_list.len())
+                            .into_iter()
+                            .all(|i| self_list[i].borrow(&fake_context).expect("Failed to borrow list member").deref() == other_list[i].borrow(&fake_context).expect("Failed to borrow list member").deref())
+                    },
+                    _ => false
+                }
+            }
+        }
+    }
+}
+
+impl Display for Collection {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        // TODO: https://github.com/kyleoneill/chimerascript/issues/33
+        // borrow() should not need to take context
+        let fake_context = Context { current_line: 0 };
+        match self {
+            Collection::Object(object) => {
+                for (key, val) in object.iter() {
+                    let val_string = match val.borrow(&fake_context) {
+                        Ok(borrowed) => borrowed.to_string(),
+                        Err(_) => return Err(std::fmt::Error)
+                    };
+                    write!(f, "{{\"{}\"}}\":\"{{{}}}\"", key, val_string)?;
+                }
+                Ok(())
+            },
+            Collection::List(list) => {
+                // TODO: Should not be doing unwrap here, get rid of fake_context
+                let list_as_str = list.into_iter().map(|c| c.borrow(&fake_context).unwrap().to_string()).collect::<Vec<String>>().join(", ");
+                write!(f, "[{}]", list_as_str)
+            }
+        }
+    }
+}
+
+impl Collection {
+    fn to_list(&self) -> Option<&Vec<Data>> {
+        match self {
+            Self::List(list) => Some(list),
+            _ => None
+        }
+    }
+    pub fn contains(&self, contains_data: Ref<DataKind>, context: &Context) -> Result<bool, ChimeraRuntimeFailure> {
+        match self {
+            Collection::List(list) => {
+                let borrowed_list_values: Result<Vec<_>, ChimeraRuntimeFailure> = list.iter().map(|x| x.borrow(context)).collect();
+                let rhs = contains_data.deref();
+                let res = borrowed_list_values?.into_iter().any(|member| member.deref() == rhs);
+                Ok(res)
+            },
+            Collection::Object(map) => {
+                // TODO: https://github.com/kyleoneill/chimerascript/issues/33
+                // "key".to_string() is a stopgap hack, replace asap when resolving ^
+                let key = contains_data.try_into_string("key".to_string(), context)?;
+                Ok(map.contains_key(key))
+            }
         }
     }
 }
@@ -218,35 +379,16 @@ pub enum Literal {
     String(String),
     Number(NumberKind),
     Bool(bool),
-    Null,
-    Object(HashMap<String, Data>),
-    List(Vec<Data>)
+    Null
 }
 
 impl Display for Literal {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        // TODO: Need to resolve this, this is a temporary hack
-        let fake_context = Context { current_line: 0 };
         match self {
             Literal::String(str) => write!(f, "{}", str),
             Literal::Number(num) => write!(f, "{}", num),
             Literal::Bool(bool) => write!(f, "{}", bool),
-            Literal::Null => write!(f, "<null>"),
-            Literal::Object(object) => {
-                for (key, val) in object.iter() {
-                    let val_string = match val.borrow(&fake_context) {
-                        Ok(v) => v.to_string(),
-                        Err(_) => return Err(std::fmt::Error)
-                    };
-                    write!(f, "{{\"{}\"}}\":\"{{{}}}\"", key, val_string)?;
-                }
-                Ok(())
-            },
-            Literal::List(list) => {
-                // TODO: Should NOT be using an unwrap, this has to be fixed
-                let list_as_str = list.into_iter().map(|c| c.borrow(&fake_context).unwrap().to_string()).collect::<Vec<String>>().join(", ");
-                write!(f, "[{}]", list_as_str)
-            }
+            Literal::Null => write!(f, "<null>")
         }
     }
 }
@@ -274,98 +416,71 @@ impl Literal {
             _ => None
         }
     }
-    fn to_list(&self) -> Option<&Vec<Data>> {
+    pub fn to_str(&self) -> Option<&str> {
         match self {
-            Self::List(list) => Some(list),
+            Self::String(s) => Some(s.as_str()),
             _ => None
         }
-    }
-    fn internal_to_string(&self) -> Option<&str> {
-        match self {
-            Self::String(string) => Some(string.as_str()),
-            _ => None
-        }
-    }
-    pub fn try_into_number_kind(&self, came_from: &Value, context: &Context) -> Result<NumberKind, ChimeraRuntimeFailure> {
-        Ok(self.to_number().ok_or_else(|| return ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::Number, context.current_line))?)
-    }
-    pub fn try_into_usize(&self, came_from: &Value, context: &Context) -> Result<usize, ChimeraRuntimeFailure> {
-        let number_kind = self.try_into_number_kind(came_from, context)?;
-        number_kind.try_into_usize(came_from, context)
-    }
-    pub fn try_into_u64(&self, came_from: &Value, context: &Context) -> Result<u64, ChimeraRuntimeFailure> {
-        if let Some(number) = self.to_number() {
-            if let NumberKind::U64(unsigned) = number {
-                return Ok(unsigned)
-            }
-        };
-        return Err(ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::Unsigned, context.current_line))
-    }
-    pub fn try_into_list(&self, came_from: &Value, context: &Context) -> Result<&Vec<Data>, ChimeraRuntimeFailure> {
-        Ok(self.to_list().ok_or_else(|| return ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::List, context.current_line))?)
-    }
-    pub fn try_into_string(&self, came_from: &Value, context: &Context) -> Result<&str, ChimeraRuntimeFailure> {
-        Ok(self.internal_to_string().ok_or_else(|| return ChimeraRuntimeFailure::VarWrongType(came_from.error_print(), VarTypes::String, context.current_line))?)
     }
 }
 
-impl <'de> Deserialize<'de> for Literal {
+impl <'de> Deserialize<'de> for DataKind {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
-        struct LiteralVisitor;
-        impl<'de> Visitor<'de> for LiteralVisitor {
-            type Value = Literal;
+        struct DatakindVisitor;
+        impl<'de> Visitor<'de> for DatakindVisitor {
+            type Value = DataKind;
             fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
                 formatter.write_str("any valid JSON value")
             }
             fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E> where E: Error {
-                Ok(Literal::Bool(v))
+                Ok(DataKind::Literal(Literal::Bool(v)))
             }
             fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> where E: Error {
-                Ok(Literal::Number(NumberKind::I64(v)))
+                Ok(DataKind::Literal(Literal::Number(NumberKind::I64(v))))
             }
             fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> where E: Error {
-                Ok(Literal::Number(NumberKind::U64(v)))
+                Ok(DataKind::Literal(Literal::Number(NumberKind::U64(v))))
             }
             fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E> where E: Error {
-                Ok(Literal::Number(NumberKind::F64(v)))
+                Ok(DataKind::Literal(Literal::Number(NumberKind::F64(v))))
             }
             fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> where E: Error {
                 self.visit_string(String::from(v))
             }
             fn visit_string<E>(self, v: String) -> Result<Self::Value, E> where E: Error {
-                Ok(Literal::String(v))
+                Ok(DataKind::Literal(Literal::String(v)))
             }
             fn visit_none<E>(self) -> Result<Self::Value, E> where E: Error {
-                Ok(Literal::Null)
+                Ok(DataKind::Literal(Literal::Null))
             }
             fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error> where D: Deserializer<'de> {
                 Deserialize::deserialize(deserializer)
             }
             fn visit_unit<E>(self) -> Result<Self::Value, E> where E: Error {
-                Ok(Literal::Null)
+                Ok(DataKind::Literal(Literal::Null))
             }
             fn visit_seq<A>(self, mut visitor: A) -> Result<Self::Value, A::Error> where A: SeqAccess<'de> {
                 let mut vec = Vec::new();
-                while let Some(member) = visitor.next_element::<Literal>()? {
-                    vec.push(Data::from_literal(member))
+                while let Some(member) = visitor.next_element::<DataKind>()? {
+                    vec.push(Data::new(member))
                 }
-                Ok(Literal::List(vec))
+                Ok(DataKind::Collection(Collection::List(vec)))
             }
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error> where A: MapAccess<'de> {
                 match map.next_key()? {
                     Some(first_key) => {
                         let mut values: HashMap<String, Data> = HashMap::new();
-                        let first_value = map.next_value::<Literal>()?;
-                        values.insert(first_key, Data::from_literal(first_value));
-                        while let Some((key, value)) = map.next_entry::<String, Literal>()? {
-                            values.insert(key, Data::from_literal(value));
+                        let first_value = map.next_value::<DataKind>()?;
+                        values.insert(first_key, Data::new(first_value));
+                        while let Some((key, value)) = map.next_entry::<String, DataKind>()? {
+                            values.insert(key, Data::new(value));
                         }
-                        Ok(Literal::Object(values))
+                        Ok(DataKind::Collection(Collection::Object(values)))
                     },
-                    None => Ok(Literal::Object(HashMap::new()))
+                    None => Ok(DataKind::Collection(Collection::Object(HashMap::new())))
                 }
             }
         }
-        deserializer.deserialize_any(LiteralVisitor)
+        deserializer.deserialize_any(DatakindVisitor)
     }
 }

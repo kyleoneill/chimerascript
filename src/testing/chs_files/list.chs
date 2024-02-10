@@ -54,6 +54,15 @@ case list-new() {
     var new_len = LIST LENGTH (my_list);
     ASSERT NOT EQUALS (first_len) (new_len);
   }
+  case list-equality() {
+    var first_list = LIST NEW [1,2,3];
+    var second_list = LIST NEW [1,2,3];
+    ASSERT EQUALS (first_list) (second_list);
+    var third_list = LIST NEW [4,5,6];
+    var fourth_list = LIST NEW ["test"];
+    ASSERT NOT EQUALS (third_list) (first_list);
+    ASSERT NOT EQUALS (fourth_list) (first_list);
+  }
 }
 
 [test]

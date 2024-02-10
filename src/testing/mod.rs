@@ -8,7 +8,7 @@ mod testing {
     use crate::CLIENT;
     use crate::abstract_syntax_tree::{ChimeraScriptAST, HttpCommand, HTTPVerb};
     use crate::err_handle::{ChimeraRuntimeFailure, VarTypes};
-    use crate::literal::{Data, Literal, NumberKind};
+    use crate::literal::{Collection, Data, DataKind, Literal, NumberKind};
     use crate::util::WebClient;
     use crate::variable_map::VariableMap;
 
@@ -28,7 +28,7 @@ mod testing {
         fn get_domain(&self) -> &str {
             self.domain.as_str()
         }
-        fn make_request(&self, context: &Context, http_command: HttpCommand, variable_map: &VariableMap) -> Result<Literal, ChimeraRuntimeFailure> {
+        fn make_request(&self, context: &Context, http_command: HttpCommand, variable_map: &VariableMap) -> Result<DataKind, ChimeraRuntimeFailure> {
             let mut response_obj: HashMap<String, Data> = HashMap::new();
             response_obj.insert("status_code".to_owned(), Data::from_literal(Literal::Number(NumberKind::U64(match http_command.verb {
                 HTTPVerb::GET => 200,
@@ -60,22 +60,21 @@ mod testing {
                 None => ()
             }
 
-            let body_res: Literal = if resolved_body.is_empty() && query_params.is_empty() {
-                Literal::Null
+            let body: DataKind = if resolved_body.is_empty() && query_params.is_empty() {
+                DataKind::Literal(Literal::Null)
             }
             else {
                 let mut body_map: HashMap<String, Data> = HashMap::new();
                 for (k, v) in query_params {
-                    body_map.insert(k, Data::from_literal(serde_json::from_str::<Literal>(v.as_str()).unwrap()));
+                    body_map.insert(k, Data::new(serde_json::from_str::<DataKind>(v.as_str()).unwrap()));
                 }
                 for (k, v) in resolved_body {
                     body_map.insert(k, v);
                 }
-                Literal::Object(body_map)
+                DataKind::Collection(Collection::Object(body_map))
             };
-
-            response_obj.insert("body".to_owned(), Data::from_literal(body_res));
-            Ok(Literal::Object(response_obj))
+            response_obj.insert("body".to_owned(), Data::new(body));
+            Ok(DataKind::Collection(Collection::Object(response_obj)))
         }
     }
 
@@ -294,7 +293,7 @@ mod testing {
         assert_eq!(res.len(), 6);
 
         // Test general list functionality
-        assert_eq!(res[0].subtest_results.len(), 9);
+        assert_eq!(res[0].subtest_results.len(), 10);
         assert_test_pass(&res[0], filename, "when making a new list");
         assert_test_pass(&res[0].subtest_results[0], filename, "when getting a list length");
         assert_test_pass(&res[0].subtest_results[1], filename, "when making an empty list");
@@ -305,6 +304,7 @@ mod testing {
         assert_test_pass(&res[0].subtest_results[6], filename, "when using LENGTH assertion on a list");
         assert_test_pass(&res[0].subtest_results[7], filename, "when using CONTAINS assertion on a list");
         assert_test_pass(&res[0].subtest_results[8], filename, "when popping from a list");
+        assert_test_pass(&res[0].subtest_results[9], filename, "when checking equality between lists");
 
         // Remove a value from list out of bounds
         assert_test_fail(&res[1], filename, "when removing a value from a list with an out-of-bounds index", ChimeraRuntimeFailure::OutOfBounds(0));
