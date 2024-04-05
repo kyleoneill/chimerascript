@@ -274,15 +274,6 @@ impl ChimeraScriptAST {
                         }
                     }
                 },
-                Rule::BeginPathArgs => {
-                    if !buffer.is_empty() {
-                        build_path.push(Value::Literal(Literal::String(buffer)));
-                        buffer = String::new();
-                    }
-                    // TODO: Should be storing this in a way that will make it easy to resolve variables
-                    //       Probably should just follow the route I went with the path and use a Vec of Value
-                    build_path.push(Value::Literal(Literal::String(token.as_str().to_owned())));
-                },
                 _ => return Err(ChimeraCompileError::new("Did not get a valid path", token.line_col()))
             }
         }
@@ -293,13 +284,47 @@ impl ChimeraScriptAST {
         Ok(build_path)
     }
 
+    fn parse_rule_to_http_assignment(pair: Pair<Rule>) -> Result<HttpAssignment, ChimeraCompileError> {
+        if pair.as_rule() != Rule::HttpAssignment {return Err(ChimeraCompileError::new("Did not get a valid http assignment", pair.line_col()))};
+        let mut http_assignment_pairs = pair.into_inner();
+
+        let assignment_token = http_assignment_pairs.next().ok_or_else(|| no_pairs_panic("HttpAssignment"))?;
+        if assignment_token.as_rule() != Rule::VariableNameAssignment {return Err(ChimeraCompileError::new("Did not get a valid variable name for an http key value pair", assignment_token.line_col()))}
+        let lhs = assignment_token.as_str().to_owned();
+
+        let value_token = http_assignment_pairs.next().ok_or_else(|| no_pairs_panic("HttpAssignment"))?;
+        let rhs = ChimeraScriptAST::parse_rule_to_value(value_token)?;
+
+        Ok(HttpAssignment { lhs, rhs })
+    }
+
+    fn parse_rule_to_query_params(pair: Pair<Rule>) -> Result<Vec<HttpAssignment>, ChimeraCompileError> {
+        if pair.as_rule() != Rule::QueryParams {return Err(ChimeraCompileError::new("Did not get a valid query param", pair.line_col()))}
+        let mut query_param_pairs = pair.into_inner();
+        let mut query_params: Vec<HttpAssignment> = Vec::new();
+
+        // Will always have a first pair, it will be an HttpAssignment
+        let first_param = ChimeraScriptAST::parse_rule_to_http_assignment(query_param_pairs.next().unwrap())?;
+        query_params.push(first_param);
+
+        // Check for optional additional query params
+        while query_param_pairs.peek().is_some() && query_param_pairs.peek().unwrap().as_rule() == Rule::AdditionalPathArgs {
+            let mut inner = query_param_pairs.next().unwrap().into_inner();
+            let http_assignment = ChimeraScriptAST::parse_rule_to_http_assignment(inner.next().unwrap())?;
+            query_params.push(http_assignment);
+        }
+
+        Ok(query_params)
+    }
+
     fn parse_rule_to_expression(pair: Pair<Rule>) -> Result<Expression, ChimeraCompileError> {
         // An Expression is going to contain
         // a. A LiteralValue which will hold some literal
         // b. An HttpCommand which will contain
         //   1. An Http verb
-        //   2. The slash path of the Http command
-        //   3. Optional list of HttpAssignment, which look like `field="value"`
+        //   2. The path of an HTTP request
+        //   3. Optional list of query params
+        //   3. Optional list of body params
         //   4. Optional list of KeyValuePair, which look like `timeout=>60`
         // c. A LIST expression
         if pair.as_rule() != Rule::Expression {return Err(ChimeraCompileError::new("Did not get a valid expression", pair.line_col()))}
@@ -324,22 +349,15 @@ impl ChimeraScriptAST {
                 let path_token = http_pairs.next().ok_or_else(|| no_pairs_panic("HttpCommand"))?;
                 let path = ChimeraScriptAST::parse_rule_to_path(path_token)?;
 
-                // Peek ahead and iterate over the next pairs to get all of the HttpAssignment ones
+                let mut query_params: Vec<HttpAssignment> = Vec::new();
+                if http_pairs.peek().is_some() && http_pairs.peek().unwrap().as_rule() == Rule::QueryParams {
+                    query_params = ChimeraScriptAST::parse_rule_to_query_params(http_pairs.next().unwrap())?;
+                }
+
+                // Peek ahead and iterate over any HttpAssignment pairs to get body params
                 let mut http_assignments: Vec<HttpAssignment> = Vec::new();
                 while http_pairs.peek().is_some() && http_pairs.peek().unwrap().as_rule() == Rule::HttpAssignment {
-                    let mut http_assignment_pairs = http_pairs.next().unwrap().into_inner();
-
-                    let assignment_token = http_assignment_pairs.next().ok_or_else(|| no_pairs_panic("HttpAssignment"))?;
-                    if assignment_token.as_rule() != Rule::VariableNameAssignment {return Err(ChimeraCompileError::new("Did not get a valid variable name for an http key value pair", assignment_token.line_col()))}
-                    let lhs = assignment_token.as_str().to_owned();
-
-                    let value_token = http_assignment_pairs.next().ok_or_else(|| no_pairs_panic("HttpAssignment"))?;
-                    let rhs = ChimeraScriptAST::parse_rule_to_value(value_token)?;
-
-                    let http_assignment = HttpAssignment {
-                        lhs,
-                        rhs
-                    };
+                    let http_assignment = ChimeraScriptAST::parse_rule_to_http_assignment(http_pairs.next().unwrap())?;
                     http_assignments.push(http_assignment);
                 }
 
@@ -364,6 +382,7 @@ impl ChimeraScriptAST {
                 Ok(Expression::HttpCommand(HttpCommand {
                     verb,
                     path,
+                    query_params,
                     http_assignments,
                     key_val_pairs
                 }))
@@ -541,7 +560,7 @@ impl Value {
     pub fn error_print(&self) -> String {
         match self {
             Value::Literal(literal) => format!("value {}", literal.to_string()),
-            Value::Variable(var_name) => format!("var {}", var_name.to_owned())
+            Value::Variable(var_name) => format!("var '{}'", var_name.to_owned())
         }
     }
 
@@ -595,6 +614,7 @@ impl std::fmt::Display for AssertSubCommand {
 pub struct HttpCommand {
     pub verb: HTTPVerb,
     path: Vec<Value>,
+    pub query_params: Vec<HttpAssignment>,
     pub http_assignments: Vec<HttpAssignment>,
     key_val_pairs: Vec<KeyValuePair>
 }
@@ -623,11 +643,21 @@ impl HttpCommand {
                 DataKind::Collection(_) => return Err(ChimeraRuntimeFailure::VarWrongType(portion.error_print(), VarTypes::Literal, context.current_line))
             }
         }
-        // TODO: need to go through resolved_path and URL escape anything that has to be
-        //       escaped, ex space has to be replaced with %20
-        // TODO: need to go through resolved_path and fill in any variable query params, ex
-        //       - GET /foo?count=(my_count_var)
-        //       See the to do in abstract_syntax_tree::parse_rule_to_path about this
+        let mut is_first_param = true;
+        for query_param in &self.query_params {
+            if is_first_param {
+                resolved_path.push('?');
+                is_first_param = false;
+            }
+            else {
+                resolved_path.push('&');
+            }
+            let data = query_param.rhs.resolve(context, variable_map)?;
+            let borrowed_data = data.borrow(context)?;
+            // TODO: This currently allows for a collection var to be used here, is that actually what I want? Should this error?
+            let formatted = format!("{}={}", query_param.lhs, borrowed_data);
+            resolved_path.push_str(formatted.as_str());
+        }
         Ok(resolved_path)
     }
     pub fn resolve_body(&self, context: &Context, variable_map: &VariableMap) -> Result<HashMap<String, String>, ChimeraRuntimeFailure> {
@@ -846,6 +876,7 @@ mod ast_tests {
     #[test]
     /// Test an Http command expression
     fn http_expression() {
+        // Basic commands for each HTTP verb
         let http_commands: Vec<HttpCommand> = ["GET /foo/bar;", "PUT /foo;", "POST /foo;", "DELETE /foo;"].into_iter().map(|x| str_to_statement(x).into()).collect();
         assert_eq!(http_commands.len(), 4);
         assert_eq!(http_commands[0].verb, HTTPVerb::GET);
@@ -854,14 +885,28 @@ mod ast_tests {
         assert_eq!(http_commands[2].verb, HTTPVerb::POST);
         assert_eq!(http_commands[3].verb, HTTPVerb::DELETE);
 
-        let with_path_assignments: HttpCommand = str_to_statement("GET /foo/bar/baz?foo=5&another=\"bar\"&boolean=true;").into();
-        assert_eq!(with_path_assignments.path, vec![Value::from_str("/foo/bar/baz").unwrap(), Value::from_str("?foo=5&another=\"bar\"&boolean=true").unwrap()]);
+        // HTTP expression with query params of varying types
+        let with_path_assignments: HttpCommand = str_to_statement("GET /foo/bar/baz?foo=5&another=\"bar\"&boolean=true&with_var=(some_var);").into();
+        assert_eq!(with_path_assignments.path, vec![Value::from_str("/foo/bar/baz").unwrap()]);
+        assert_eq!(with_path_assignments.query_params.len(), 4);
+        assert_eq!(with_path_assignments.query_params[0].lhs, "foo");
+        assert_eq!(with_path_assignments.query_params[0].rhs, Value::Literal(Literal::Number(NumberKind::U64(5))));
+        assert_eq!(with_path_assignments.query_params[1].lhs, "another");
+        assert_eq!(with_path_assignments.query_params[1].rhs, Value::Literal(Literal::String("bar".to_owned())));
+        assert_eq!(with_path_assignments.query_params[2].lhs, "boolean");
+        assert_eq!(with_path_assignments.query_params[2].rhs, Value::Literal(Literal::Bool(true)));
+        assert_eq!(with_path_assignments.query_params[3].lhs, "with_var");
+        assert_eq!(with_path_assignments.query_params[3].rhs, Value::Variable("some_var".to_owned()));
 
-        // This HttpCommand has a path with args, assignments, and key/value pairs
-        // Probably should make this more atomic though (test just assignment, then key/value, then multiple of each)
+        // HTTP command with a path, query params, body params, and key/value pairs
         let full_expression: HttpCommand = str_to_statement("GET /foo/bar/baz?foo=5&another=\"bar\" some_num=5 some_str=\"value\" timeout=>60 boolKey=>false;").into();
         assert_eq!(full_expression.verb, HTTPVerb::GET);
-        assert_eq!(full_expression.path, vec![Value::from_str("/foo/bar/baz").unwrap(), Value::from_str("?foo=5&another=\"bar\"").unwrap()]);
+        assert_eq!(full_expression.path, vec![Value::from_str("/foo/bar/baz").unwrap()]);
+        assert_eq!(full_expression.query_params.len(), 2);
+        assert_eq!(full_expression.query_params[0].lhs, "foo");
+        assert_eq!(full_expression.query_params[0].rhs, Value::Literal(Literal::Number(NumberKind::U64(5))));
+        assert_eq!(full_expression.query_params[1].lhs, "another");
+        assert_eq!(full_expression.query_params[1].rhs, Value::Literal(Literal::String("bar".to_owned())));
         assert_eq!(full_expression.http_assignments.len(), 2);
         assert_eq!(full_expression.http_assignments[0].lhs, "some_num".to_owned());
         assert_eq!(full_expression.http_assignments[0].rhs, Value::Literal(Literal::Number(NumberKind::U64(5))));
@@ -869,14 +914,19 @@ mod ast_tests {
         assert_eq!(full_expression.key_val_pairs[0].key, "timeout".to_owned());
         assert_eq!(full_expression.key_val_pairs[0].value, Value::Literal(Literal::Number(NumberKind::U64(60))));
 
+        // HTTP command where there are multiple variables in the path
         let endpoint_with_variable: HttpCommand = str_to_statement("GET /foo/beginning(some_var)end/(another_var)/ending?foo=5&bar=10;").into();
-        assert_eq!(endpoint_with_variable.path.len(), 6);
+        assert_eq!(endpoint_with_variable.path.len(), 5);
         assert_eq!(endpoint_with_variable.path[0], Value::from_str("/foo/beginning").unwrap());
         assert_eq!(endpoint_with_variable.path[1], Value::Variable("some_var".to_owned()));
         assert_eq!(endpoint_with_variable.path[2], Value::from_str("end/").unwrap());
         assert_eq!(endpoint_with_variable.path[3], Value::Variable("another_var".to_owned()));
         assert_eq!(endpoint_with_variable.path[4], Value::from_str("/ending").unwrap());
-        assert_eq!(endpoint_with_variable.path[5], Value::from_str("?foo=5&bar=10").unwrap());
+        assert_eq!(endpoint_with_variable.query_params.len(), 2);
+        assert_eq!(endpoint_with_variable.query_params[0].lhs, "foo");
+        assert_eq!(endpoint_with_variable.query_params[0].rhs, Value::Literal(Literal::Number(NumberKind::U64(5))));
+        assert_eq!(endpoint_with_variable.query_params[1].lhs, "bar");
+        assert_eq!(endpoint_with_variable.query_params[1].rhs, Value::Literal(Literal::Number(NumberKind::U64(10))));
     }
 
     #[test]

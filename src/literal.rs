@@ -388,7 +388,7 @@ impl Display for Literal {
             Literal::String(str) => write!(f, "{}", str),
             Literal::Number(num) => write!(f, "{}", num),
             Literal::Bool(bool) => write!(f, "{}", bool),
-            Literal::Null => write!(f, "<null>")
+            Literal::Null => write!(f, "null")
         }
     }
 }
@@ -448,6 +448,25 @@ impl <'de> Deserialize<'de> for DataKind {
                 self.visit_string(String::from(v))
             }
             fn visit_string<E>(self, v: String) -> Result<Self::Value, E> where E: Error {
+                // Serde often interprets non-string values as strings for non-structured data like this interpreters
+                // so we need to check if we have a non-string type
+                // TODO: This fixes an issue I ran into, but this will cause a new problem of silently converting user
+                //       input if a user _wants_ to use a stringified number. If a user expects the value "5" here they
+                //       might not understand why they keep getting u64::5. This is not a permanent fix
+                match v.parse::<u64>() {
+                    Ok(unsigned_int) => return Ok(DataKind::Literal(Literal::Number(NumberKind::U64(unsigned_int)))),
+                    Err(_) => match v.parse::<i64>() {
+                        Ok(signed_int) => return Ok(DataKind::Literal(Literal::Number(NumberKind::I64(signed_int)))),
+                        Err(_) => match v.parse::<f64>() {
+                            Ok(float) => return Ok(DataKind::Literal(Literal::Number(NumberKind::F64(float)))),
+                            Err(_) => ()
+                        }
+                    }
+                }
+                match v.parse::<bool>() {
+                    Ok(boolean) => return Ok(DataKind::Literal(Literal::Bool(boolean))),
+                    Err(_) => ()
+                }
                 Ok(DataKind::Literal(Literal::String(v)))
             }
             fn visit_none<E>(self) -> Result<Self::Value, E> where E: Error {

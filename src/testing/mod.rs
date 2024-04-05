@@ -37,40 +37,28 @@ mod testing {
                 HTTPVerb::PUT => 200
             }))));
 
+            // Take a request and extract the query and body params from it
             let mut resolved_body: HashMap<String, Data> = HashMap::new();
             for assignment in &http_command.http_assignments {
                 let key = assignment.lhs.clone();
                 let value = assignment.rhs.resolve(context, variable_map)?;
                 resolved_body.insert(key, value);
             }
-            let resolved_path = http_command.resolve_path(context, variable_map)?;
-            let mut query_params: HashMap<String, String> = HashMap::new();
-            let mut split = resolved_path.split("?");
-            split.next().unwrap();
-            match split.next() {
-                Some(next) => {
-                    let second_split = next.split("&");
-                    for thing in second_split {
-                        let mut third_split = thing.split("=");
-                        let key = third_split.next().unwrap().to_owned();
-                        let value = third_split.next().unwrap().to_owned();
-                        query_params.insert(key, value);
-                    }
-                },
-                None => ()
+            let mut query_params: HashMap<String, Data> = HashMap::new();
+            for query_param in &http_command.query_params {
+                let key = query_param.lhs.clone();
+                let value = query_param.rhs.resolve(context, variable_map)?;
+                query_params.insert(key, value);
             }
 
+            // Construct a response struct out of the request params
             let body: DataKind = if resolved_body.is_empty() && query_params.is_empty() {
                 DataKind::Literal(Literal::Null)
             }
             else {
                 let mut body_map: HashMap<String, Data> = HashMap::new();
-                for (k, v) in query_params {
-                    body_map.insert(k, Data::new(serde_json::from_str::<DataKind>(v.as_str()).unwrap()));
-                }
-                for (k, v) in resolved_body {
-                    body_map.insert(k, v);
-                }
+                body_map.extend(query_params);
+                body_map.extend(resolved_body);
                 DataKind::Collection(Collection::Object(body_map))
             };
             response_obj.insert("body".to_owned(), Data::new(body));
@@ -228,7 +216,7 @@ mod testing {
     fn web_requests() {
         let filename = "web_request.chs";
         let res = results_from_filename(filename);
-        assert_eq!(res.len(), 4);
+        assert_eq!(res.len(), 6);
 
         // Test GET
         assert_test_pass(&res[0], filename, "to confirm basic usage of a GET request");
@@ -245,6 +233,14 @@ mod testing {
 
         // Test POST
         assert_test_pass(&res[3], filename, "to confirm basic usage of a POST request");
+
+        // Test PRINT
+        assert_test_pass(&res[4], filename, "to confirm basic usage of PRINT on a request");
+
+        // Test query params
+        assert_test_pass(&res[5], filename, "to confirm basic usage of query params in a request");
+        assert_subtest_length(&res[5], 1, filename);
+        assert_test_pass(&res[5].subtest_results[0], filename, "to confirm usage of variables and strings in request query params");
     }
 
     #[test]
