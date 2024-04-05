@@ -450,6 +450,9 @@ impl <'de> Deserialize<'de> for DataKind {
             fn visit_string<E>(self, v: String) -> Result<Self::Value, E> where E: Error {
                 // Serde often interprets non-string values as strings for non-structured data like this interpreters
                 // so we need to check if we have a non-string type
+                // TODO: This fixes an issue I ran into, but this will cause a new problem of silently converting user
+                //       input if a user _wants_ to use a stringified number. If a user expects the value "5" here they
+                //       might not understand why they keep getting u64::5. This is not a permanent fix
                 match v.parse::<u64>() {
                     Ok(unsigned_int) => return Ok(DataKind::Literal(Literal::Number(NumberKind::U64(unsigned_int)))),
                     Err(_) => match v.parse::<i64>() {
