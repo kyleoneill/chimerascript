@@ -1,6 +1,6 @@
 use std::ops::Deref;
 use crate::literal::{Collection, DataKind};
-use crate::abstract_syntax_tree::{AssertCommand, AssertSubCommand};
+use crate::abstract_syntax_tree::{AssertCommand, AssertSubCommand, Value};
 use crate::err_handle::{ChimeraRuntimeFailure, VarTypes};
 use crate::frontend::Context;
 use crate::variable_map::VariableMap;
@@ -66,13 +66,17 @@ pub fn assert_command(context: &Context, assert_command: &AssertCommand, variabl
             }
         }
     };
+    let left_val_error_message = match &assert_command.left_value {
+        Value::Literal(literal_val) => format!("value {}", literal_val),
+        Value::Variable(var_name) => format!("var '{}' with value '{}'", var_name, left_data.deref())
+    };
     if assert_command.negate_assertion && assertion_passed {
         // Assertion was true but expected to be false
-        return Err(ChimeraRuntimeFailure::TestFailure(format!("Expected '{}' to not {} '{}'", assert_command.left_value.error_print(), assert_command.subcommand, assert_command.right_value.error_print()), context.current_line))
+        return Err(ChimeraRuntimeFailure::TestFailure(format!("Expected {} to not {} {}", left_val_error_message, assert_command.subcommand, assert_command.right_value.error_print()), context.current_line))
     }
     else if !assert_command.negate_assertion && !assertion_passed {
         // Assertion was false but expected to be true
-        return Err(ChimeraRuntimeFailure::TestFailure(format!("Expected '{}' to {} '{}'", assert_command.left_value.error_print(), assert_command.subcommand, assert_command.right_value.error_print()), context.current_line))
+        return Err(ChimeraRuntimeFailure::TestFailure(format!("Expected {} to {} {}", left_val_error_message, assert_command.subcommand, assert_command.right_value.error_print()), context.current_line))
     }
     Ok(())
 }

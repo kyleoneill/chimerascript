@@ -2,6 +2,8 @@ from flask import Flask, request, make_response, json
 
 app = Flask("simple-server")
 
+# flask --app main run
+
 @app.route("/")
 def entry():
     return json.jsonify({"status":"online","nested_field":{"val":5}})
@@ -24,7 +26,7 @@ def test_resource():
         if first_query_param == None or second_query_param == None:
             return json.jsonify({"resource":example, "extras":{"first":first_query_param, "second":second_query_param}})
         else:
-            return json.jsonify({"first":1,"second":True})
+            return json.jsonify({"first": first_query_param,"second": second_query_param})
     elif request.method == "PUT":
         json_data = request.get_json()
         for thing in json_data:
