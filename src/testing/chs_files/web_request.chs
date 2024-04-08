@@ -58,3 +58,25 @@ case query_params() {
         ASSERT EQUALS (res.body.second) "i am a value";
     }
 }
+
+[test]
+case headers() {
+    // Verify a basic request with a header works
+    var header_res = GET /test_resource authorization:"foo";
+    ASSERT STATUS (header_res) 200;
+    ASSERT CONTAINS (header_res.body) "authorization";
+    ASSERT EQUALS (header_res.body.authorization) "foo";
+
+    // Verify a request with a header set to a variable works
+    var foo = LITERAL 5;
+    var header_with_var = GET /test_resource authorization:(foo);
+    ASSERT STATUS (header_with_var) 200;
+    ASSERT CONTAINS (header_with_var.body) "authorization";
+    ASSERT EQUALS (header_with_var.body.authorization) 5;
+
+    // Verify a request with a custom header in the expected format works
+    var header_with_var = GET /test_resource foo:5;
+    ASSERT STATUS (header_with_var) 200;
+    ASSERT CONTAINS (header_with_var.body) "foo";
+    ASSERT EQUALS (header_with_var.body.foo) 5;
+}

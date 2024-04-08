@@ -39,7 +39,7 @@ Expression = { HttpCommand | "LITERAL" ~ LiteralValue | "LIST" ~ ListExpression 
 
 // HTTP EXPRESSION
 // e.g. PUT /foo?field=5 name="hello" timeout=>60
-HttpCommand = { HTTPVerb ~ Path ~ QueryParams? ~ HttpAssignment* ~ KeyValuePair* }
+HttpCommand = { HTTPVerb ~ Path ~ QueryParams? ~ HttpAssignment* ~ HttpHeader* ~ KeyValuePair* }
 HTTPVerb = { "GET" | "PUT" | "POST" | "DELETE" }
 // e.g. /foo/bar?thing=5&other=50&another=10
 Path = ${ PathEndpoint+ }
@@ -48,6 +48,7 @@ QueryParams = ${ "?" ~ HttpAssignment ~ AdditionalPathArgs* }
 AdditionalPathArgs = ${ "&" ~ HttpAssignment }
 KeyValuePair = ${ VariableNameAssignment ~ "=>" ~ Value } // repeatable optional key/val like timeout=>60
 HttpAssignment = ${ VariableNameAssignment ~ "=" ~ Value }
+HttpHeader = ${ VariableNameAssignment ~ ":" ~ Value }
 
 // LIST EXPRESSION
 ListExpression = { ListNew | ListCommandExpr }
