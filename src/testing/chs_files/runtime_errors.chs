@@ -31,3 +31,9 @@ case index-non-number() {
     var my_list = LIST NEW [1,2];
     LIST REMOVE (my_list) "some_str";
 }
+
+[test]
+case http_bad_header() {
+    // Verify a request using an invalid header fails
+    GET /test_resource Foobar:"foo";
+}

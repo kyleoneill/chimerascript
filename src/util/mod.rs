@@ -32,20 +32,21 @@ impl WebClient for RealClient {
     fn make_request(&self, context: &Context, http_command: HttpCommand, variable_map: &VariableMap) -> Result<DataKind, ChimeraRuntimeFailure> {
         let resolved_path = http_command.resolve_path(context, variable_map)?;
         let body_map = http_command.resolve_body(context, variable_map)?;
+        let headers = http_command.resolve_header(context, variable_map)?;
 
         // Make the web request
         let res = match http_command.verb {
             HTTPVerb::GET => {
-                self.client.get(resolved_path.as_str()).send()
+                self.client.get(resolved_path.as_str()).headers(headers).send()
             },
             HTTPVerb::DELETE => {
-                self.client.delete(resolved_path.as_str()).send()
+                self.client.delete(resolved_path.as_str()).headers(headers).send()
             },
             HTTPVerb::POST => {
-                self.client.post(resolved_path.as_str()).json(&body_map).send()
+                self.client.post(resolved_path.as_str()).json(&body_map).headers(headers).send()
             },
             HTTPVerb::PUT => {
-                self.client.put(resolved_path.as_str()).json(&body_map).send()
+                self.client.put(resolved_path.as_str()).json(&body_map).headers(headers).send()
             }
         };
         match res {

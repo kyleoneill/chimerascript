@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Formatter;
 use std::ops::Deref;
 use pest::iterators::Pair;
+use reqwest::header::{HeaderMap, HeaderName};
 use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure, VarTypes};
 use crate::frontend::{Rule, Context};
 use crate::literal::{Data, DataKind, Literal, NumberKind};
@@ -285,7 +286,7 @@ impl ChimeraScriptAST {
     }
 
     fn parse_rule_to_http_assignment(pair: Pair<Rule>) -> Result<HttpAssignment, ChimeraCompileError> {
-        if pair.as_rule() != Rule::HttpAssignment {return Err(ChimeraCompileError::new("Did not get a valid http assignment", pair.line_col()))};
+        if pair.as_rule() != Rule::HttpAssignment && pair.as_rule() != Rule::HttpHeader {return Err(ChimeraCompileError::new("Did not get a valid http assignment", pair.line_col()))};
         let mut http_assignment_pairs = pair.into_inner();
 
         let assignment_token = http_assignment_pairs.next().ok_or_else(|| no_pairs_panic("HttpAssignment"))?;
@@ -317,6 +318,70 @@ impl ChimeraScriptAST {
         Ok(query_params)
     }
 
+    fn parse_rule_to_http_command(pair: Pair<Rule>) -> Result<Expression, ChimeraCompileError> {
+        if pair.as_rule() != Rule::HttpCommand {return Err(ChimeraCompileError::new("Did not get a valid http command", pair.line_col()))}
+        let mut http_pairs = pair.into_inner();
+
+        let verb_token = http_pairs.next().ok_or_else(|| no_pairs_panic("HttpCommand"))?;
+        if verb_token.as_rule() != Rule::HTTPVerb {return Err(ChimeraCompileError::new("Did not get a valid HTTP verb", verb_token.line_col()))}
+        let verb = match verb_token.as_str() {
+            "GET" => HTTPVerb::GET,
+            "PUT" => HTTPVerb::PUT,
+            "POST" => HTTPVerb::POST,
+            "DELETE" => HTTPVerb::DELETE,
+            _ => return Err(ChimeraCompileError::new("Did not get a valid HTTP verb", verb_token.line_col()))
+        };
+
+        let path_token = http_pairs.next().ok_or_else(|| no_pairs_panic("HttpCommand"))?;
+        let path = ChimeraScriptAST::parse_rule_to_path(path_token)?;
+
+        let mut query_params: Vec<HttpAssignment> = Vec::new();
+        if http_pairs.peek().is_some() && http_pairs.peek().unwrap().as_rule() == Rule::QueryParams {
+            query_params = ChimeraScriptAST::parse_rule_to_query_params(http_pairs.next().unwrap())?;
+        }
+
+        // Peek ahead and iterate over any HttpAssignment pairs to get body params
+        let mut http_assignments: Vec<HttpAssignment> = Vec::new();
+        while http_pairs.peek().is_some() && http_pairs.peek().unwrap().as_rule() == Rule::HttpAssignment {
+            let http_assignment = ChimeraScriptAST::parse_rule_to_http_assignment(http_pairs.next().unwrap())?;
+            http_assignments.push(http_assignment);
+        }
+
+        // Peek ahead and iterate over any HttpHeader HttpAssignment pairs
+        let mut headers: Vec<HttpAssignment> = Vec::new();
+        while http_pairs.peek().is_some() && http_pairs.peek().unwrap().as_rule() == Rule::HttpHeader {
+            let http_assignment = ChimeraScriptAST::parse_rule_to_http_assignment(http_pairs.next().unwrap())?;
+            headers.push(http_assignment);
+        }
+
+        // Peek ahead and iterate over any KeyValuePair pairs
+        let mut key_val_pairs: Vec<KeyValuePair> = Vec::new();
+        while http_pairs.peek().is_some() && http_pairs.peek().unwrap().as_rule() == Rule::KeyValuePair {
+            let mut key_value_pairs = http_pairs.next().unwrap().into_inner();
+
+            let assignment_token = key_value_pairs.next().ok_or_else(|| no_pairs_panic("KeyValuePair"))?;
+            if assignment_token.as_rule() != Rule::VariableNameAssignment {return Err(ChimeraCompileError::new("Did not get a valid key for a key value pair", assignment_token.line_col()))}
+            let key = assignment_token.as_str().to_owned();
+
+            let value_token = key_value_pairs.next().ok_or_else(|| no_pairs_panic("KeyValuePair"))?;
+            let value = ChimeraScriptAST::parse_rule_to_value(value_token)?;
+
+            let key_value = KeyValuePair {
+                key,
+                value
+            };
+            key_val_pairs.push(key_value);
+        }
+        Ok(Expression::HttpCommand(HttpCommand {
+            verb,
+            path,
+            query_params,
+            http_assignments,
+            headers,
+            key_val_pairs
+        }))
+    }
+
     fn parse_rule_to_expression(pair: Pair<Rule>) -> Result<Expression, ChimeraCompileError> {
         // An Expression is going to contain
         // a. A LiteralValue which will hold some literal
@@ -333,60 +398,7 @@ impl ChimeraScriptAST {
         let first_token = expression_pairs.next().ok_or_else(|| no_pairs_panic("Expression"))?;
         match first_token.as_rule() {
             Rule::LiteralValue => Ok(Expression::LiteralExpression(ChimeraScriptAST::parse_rule_to_literal_value(first_token)?)),
-            Rule::HttpCommand => {
-                let mut http_pairs = first_token.into_inner();
-
-                let verb_token = http_pairs.next().ok_or_else(|| no_pairs_panic("HttpCommand"))?;
-                if verb_token.as_rule() != Rule::HTTPVerb {return Err(ChimeraCompileError::new("Did not get a valid HTTP verb", verb_token.line_col()))}
-                let verb = match verb_token.as_str() {
-                    "GET" => HTTPVerb::GET,
-                    "PUT" => HTTPVerb::PUT,
-                    "POST" => HTTPVerb::POST,
-                    "DELETE" => HTTPVerb::DELETE,
-                    _ => return Err(ChimeraCompileError::new("Did not get a valid HTTP verb", verb_token.line_col()))
-                };
-
-                let path_token = http_pairs.next().ok_or_else(|| no_pairs_panic("HttpCommand"))?;
-                let path = ChimeraScriptAST::parse_rule_to_path(path_token)?;
-
-                let mut query_params: Vec<HttpAssignment> = Vec::new();
-                if http_pairs.peek().is_some() && http_pairs.peek().unwrap().as_rule() == Rule::QueryParams {
-                    query_params = ChimeraScriptAST::parse_rule_to_query_params(http_pairs.next().unwrap())?;
-                }
-
-                // Peek ahead and iterate over any HttpAssignment pairs to get body params
-                let mut http_assignments: Vec<HttpAssignment> = Vec::new();
-                while http_pairs.peek().is_some() && http_pairs.peek().unwrap().as_rule() == Rule::HttpAssignment {
-                    let http_assignment = ChimeraScriptAST::parse_rule_to_http_assignment(http_pairs.next().unwrap())?;
-                    http_assignments.push(http_assignment);
-                }
-
-                // Peek ahead and iterate over the next pairs to get all of the KeyValuePair ones
-                let mut key_val_pairs: Vec<KeyValuePair> = Vec::new();
-                while http_pairs.peek().is_some() && http_pairs.peek().unwrap().as_rule() == Rule::KeyValuePair {
-                    let mut key_value_pairs = http_pairs.next().unwrap().into_inner();
-
-                    let assignment_token = key_value_pairs.next().ok_or_else(|| no_pairs_panic("KeyValuePair"))?;
-                    if assignment_token.as_rule() != Rule::VariableNameAssignment {return Err(ChimeraCompileError::new("Did not get a valid key for a key value pair", assignment_token.line_col()))}
-                    let key = assignment_token.as_str().to_owned();
-
-                    let value_token = key_value_pairs.next().ok_or_else(|| no_pairs_panic("KeyValuePair"))?;
-                    let value = ChimeraScriptAST::parse_rule_to_value(value_token)?;
-
-                    let key_value = KeyValuePair {
-                        key,
-                        value
-                    };
-                    key_val_pairs.push(key_value);
-                }
-                Ok(Expression::HttpCommand(HttpCommand {
-                    verb,
-                    path,
-                    query_params,
-                    http_assignments,
-                    key_val_pairs
-                }))
-            },
+            Rule::HttpCommand => { ChimeraScriptAST::parse_rule_to_http_command(first_token) },
             Rule::ListExpression => {
                 let mut list_paris = first_token.into_inner();
                 let list_expression_kind_token = list_paris.next().ok_or_else(|| no_pairs_panic("ListExpression"))?;
@@ -616,6 +628,7 @@ pub struct HttpCommand {
     path: Vec<Value>,
     pub query_params: Vec<HttpAssignment>,
     pub http_assignments: Vec<HttpAssignment>,
+    pub headers: Vec<HttpAssignment>,
     key_val_pairs: Vec<KeyValuePair>
 }
 
@@ -668,6 +681,21 @@ impl HttpCommand {
             body_map.insert(key, value);
         }
         Ok(body_map)
+    }
+    pub fn resolve_header(&self, context: &Context, variable_map: &VariableMap) -> Result<HeaderMap, ChimeraRuntimeFailure> {
+        let mut headers: HeaderMap = HeaderMap::new();
+        for pair in &self.headers {
+            let header_name = match HeaderName::from_lowercase(pair.lhs.as_bytes()) {
+                Ok(valid) => valid,
+                Err(_) => return Err(ChimeraRuntimeFailure::InvalidHeader(context.current_line, pair.lhs.clone()))
+            };
+            let value = match pair.rhs.resolve(context, variable_map)?.borrow(context)?.to_string().parse() {
+                Ok(val) => val,
+                Err(_) => return Err(ChimeraRuntimeFailure::InternalError("resolving header value".to_owned()))
+            };
+            headers.insert(header_name, value);
+        }
+        Ok(headers)
     }
 }
 
@@ -927,6 +955,16 @@ mod ast_tests {
         assert_eq!(endpoint_with_variable.query_params[0].rhs, Value::Literal(Literal::Number(NumberKind::U64(5))));
         assert_eq!(endpoint_with_variable.query_params[1].lhs, "bar");
         assert_eq!(endpoint_with_variable.query_params[1].rhs, Value::Literal(Literal::Number(NumberKind::U64(10))));
+
+        // HTTP command with a header
+        let endpoint_with_header: HttpCommand = str_to_statement("GET /foo/bar authorization:\"bar\" age:(some_var);").into();
+        assert_eq!(endpoint_with_header.path.len(), 1);
+        assert_eq!(endpoint_with_header.path[0], Value::from_str("/foo/bar").unwrap());
+        assert_eq!(endpoint_with_header.headers.len(), 2);
+        assert_eq!(endpoint_with_header.headers[0].lhs, "authorization".to_owned());
+        assert_eq!(endpoint_with_header.headers[0].rhs, Value::Literal(Literal::String("bar".to_owned())));
+        assert_eq!(endpoint_with_header.headers[1].lhs, "age".to_owned());
+        assert_eq!(endpoint_with_header.headers[1].rhs, Value::Variable("some_var".to_owned()));
     }
 
     #[test]

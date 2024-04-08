@@ -50,15 +50,23 @@ mod testing {
                 let value = query_param.rhs.resolve(context, variable_map)?;
                 query_params.insert(key, value);
             }
+            let raw_headers = &http_command.resolve_header(context, variable_map)?;
+            let mut headers: HashMap<String, Data> = HashMap::new();
+            for (key, value) in raw_headers.iter() {
+                let deserializable_value = format!("\"{}\"", value.to_str().unwrap());
+                let data = Data::new(serde_json::from_slice(deserializable_value.as_bytes()).unwrap());
+                headers.insert(key.to_string(), data);
+            }
 
             // Construct a response struct out of the request params
-            let body: DataKind = if resolved_body.is_empty() && query_params.is_empty() {
+            let body: DataKind = if resolved_body.is_empty() && query_params.is_empty() && headers.is_empty() {
                 DataKind::Literal(Literal::Null)
             }
             else {
                 let mut body_map: HashMap<String, Data> = HashMap::new();
                 body_map.extend(query_params);
                 body_map.extend(resolved_body);
+                body_map.extend(headers);
                 DataKind::Collection(Collection::Object(body_map))
             };
             response_obj.insert("body".to_owned(), Data::new(body));
@@ -216,7 +224,7 @@ mod testing {
     fn web_requests() {
         let filename = "web_request.chs";
         let res = results_from_filename(filename);
-        assert_eq!(res.len(), 6);
+        assert_eq!(res.len(), 7);
 
         // Test GET
         assert_test_pass(&res[0], filename, "to confirm basic usage of a GET request");
@@ -241,6 +249,9 @@ mod testing {
         assert_test_pass(&res[5], filename, "to confirm basic usage of query params in a request");
         assert_subtest_length(&res[5], 1, filename);
         assert_test_pass(&res[5].subtest_results[0], filename, "to confirm usage of variables and strings in request query params");
+
+        // Test headers
+        assert_test_pass(&res[6], filename, "to confirm basic usage of headers in a request");
     }
 
     #[test]
@@ -248,7 +259,7 @@ mod testing {
     fn runtime_errors() {
         let filename = "runtime_errors.chs";
         let res = results_from_filename(filename);
-        assert_eq!(res.len(), 6);
+        assert_eq!(res.len(), 7);
 
         // Non-existent var
         assert_test_fail(&res[0], filename, "when using a non-existent variable", ChimeraRuntimeFailure::VarNotFound("".to_owned(), 0));
@@ -265,6 +276,9 @@ mod testing {
         // Index a list with a non-existent subfield and a non number
         assert_test_fail(&res[4], filename, "when accessing a list via a non-existent subfield", ChimeraRuntimeFailure::TriedToIndexWithNonNumber(0));
         assert_test_fail(&res[5], filename, "when accessing a list with a non-numerical index", ChimeraRuntimeFailure::TriedToIndexWithNonNumber(0));
+
+        // Use an invalid http header
+        assert_test_fail(&res[6], filename, "when making an http request with an invalid header", ChimeraRuntimeFailure::InvalidHeader(0, "".to_owned()));
     }
 
     #[test]
