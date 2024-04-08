@@ -347,13 +347,14 @@ impl ChimeraScriptAST {
             http_assignments.push(http_assignment);
         }
 
+        // Peek ahead and iterate over any HttpHeader HttpAssignment pairs
         let mut headers: Vec<HttpAssignment> = Vec::new();
         while http_pairs.peek().is_some() && http_pairs.peek().unwrap().as_rule() == Rule::HttpHeader {
             let http_assignment = ChimeraScriptAST::parse_rule_to_http_assignment(http_pairs.next().unwrap())?;
             headers.push(http_assignment);
         }
 
-        // Peek ahead and iterate over the next pairs to get all of the KeyValuePair ones
+        // Peek ahead and iterate over any KeyValuePair pairs
         let mut key_val_pairs: Vec<KeyValuePair> = Vec::new();
         while http_pairs.peek().is_some() && http_pairs.peek().unwrap().as_rule() == Rule::KeyValuePair {
             let mut key_value_pairs = http_pairs.next().unwrap().into_inner();
@@ -684,15 +685,13 @@ impl HttpCommand {
     pub fn resolve_header(&self, context: &Context, variable_map: &VariableMap) -> Result<HeaderMap, ChimeraRuntimeFailure> {
         let mut headers: HeaderMap = HeaderMap::new();
         for pair in &self.headers {
-            println!("{:?}", pair.lhs);
             let header_name = match HeaderName::from_lowercase(pair.lhs.as_bytes()) {
                 Ok(valid) => valid,
                 Err(_) => return Err(ChimeraRuntimeFailure::InvalidHeader(context.current_line, pair.lhs.clone()))
             };
-            println!("{:?}", header_name);
             let value = match pair.rhs.resolve(context, variable_map)?.borrow(context)?.to_string().parse() {
                 Ok(val) => val,
-                Err(_) => return Err(ChimeraRuntimeFailure::InvalidHeader(context.current_line, "resolving header value".to_owned()))
+                Err(_) => return Err(ChimeraRuntimeFailure::InternalError("resolving header value".to_owned()))
             };
             headers.insert(header_name, value);
         }
