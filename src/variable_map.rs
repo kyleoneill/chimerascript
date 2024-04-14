@@ -1,8 +1,8 @@
-use std::cell::RefMut;
-use std::collections::HashMap;
-use crate::literal::{DataKind, Data};
 use crate::err_handle::ChimeraRuntimeFailure;
 use crate::frontend::Context;
+use crate::literal::{Data, DataKind};
+use std::cell::RefMut;
+use std::collections::HashMap;
 
 /*
 Variables are stored in an Rc<RefCell<DataKind>>
@@ -32,24 +32,36 @@ removed and replaced.
 */
 
 pub struct VariableMap {
-    map: HashMap<String, Data>
+    map: HashMap<String, Data>,
 }
 
 impl VariableMap {
     pub fn new() -> Self {
-        Self { map: HashMap::new() }
+        Self {
+            map: HashMap::new(),
+        }
     }
     pub fn get(&self, context: &Context, key: &str) -> Result<&Data, ChimeraRuntimeFailure> {
         match self.map.get(key) {
             Some(var_value) => Ok(var_value),
-            None => Err(ChimeraRuntimeFailure::VarNotFound(key.to_owned(), context.current_line))
+            None => Err(ChimeraRuntimeFailure::VarNotFound(
+                key.to_owned(),
+                context.current_line,
+            )),
         }
     }
 
-    pub fn get_mut(&self, context: &Context, key: &str) -> Result<RefMut<DataKind>, ChimeraRuntimeFailure> {
+    pub fn get_mut(
+        &self,
+        context: &Context,
+        key: &str,
+    ) -> Result<RefMut<DataKind>, ChimeraRuntimeFailure> {
         match self.map.get(key) {
             Some(var_value) => var_value.borrow_mut(context),
-            None => Err(ChimeraRuntimeFailure::VarNotFound(key.to_owned(), context.current_line))
+            None => Err(ChimeraRuntimeFailure::VarNotFound(
+                key.to_owned(),
+                context.current_line,
+            )),
         }
     }
     pub fn insert(&mut self, key: String, value: Data) {

@@ -1,7 +1,7 @@
-mod err_handle;
-mod frontend;
 mod abstract_syntax_tree;
 mod commands;
+mod err_handle;
+mod frontend;
 mod literal;
 mod testing;
 mod util;
@@ -10,17 +10,17 @@ mod variable_map;
 use err_handle::print_error;
 use frontend::ResultCount;
 use util::client::Timer;
-use util::client::{WebClient, RealClient};
+use util::client::{RealClient, WebClient};
 use util::config::Config;
 
 extern crate reqwest;
 extern crate serde;
 extern crate serde_json;
+use crate::abstract_syntax_tree::ChimeraScriptAST;
+use clap::Parser;
 use std::fs;
 use std::path::Path;
 use std::sync::OnceLock;
-use clap::Parser;
-use crate::abstract_syntax_tree::ChimeraScriptAST;
 
 const FILE_EXTENSION: &'static str = "chs";
 
@@ -37,7 +37,7 @@ struct Args {
     name: Option<String>,
     /// Path to a config file
     #[arg(short)]
-    config: String
+    config: String,
 }
 
 static CLIENT: OnceLock<&(dyn WebClient + Sync)> = OnceLock::new();
@@ -73,8 +73,11 @@ fn main() {
     //       But it SHOULD error when being passed a single file
     let extension = path.extension();
     if extension.is_none() || extension.unwrap() != FILE_EXTENSION {
-        print_error(&format!("{} has an invalid extension, expected it to be '.chs'", &args.path));
-        return
+        print_error(&format!(
+            "{} has an invalid extension, expected it to be '.chs'",
+            &args.path
+        ));
+        return;
     }
 
     let file_contents = match fs::read_to_string(&args.path) {
@@ -89,11 +92,16 @@ fn main() {
     // lifetime, so the client must be placed into its own OnceLock. A little hacky, but functional.
     // The purpose of CLIENT is so the web client can be mocked by tests
     // TODO: make a client builder here, configure it, then build the client
-    let client = RealClient::new(config.get_target_address(), reqwest::blocking::Client::new());
-    REAL_CLIENT.set(client).expect("Failed to set up web client");
+    let client = RealClient::new(
+        config.get_target_address(),
+        reqwest::blocking::Client::new(),
+    );
+    REAL_CLIENT
+        .set(client)
+        .expect("Failed to set up web client");
     match CLIENT.set(REAL_CLIENT.get().unwrap()) {
         Ok(_) => (),
-        Err(_) => panic!("Failed to set up web client")
+        Err(_) => panic!("Failed to set up web client"),
     }
 
     match ChimeraScriptAST::new(file_contents.as_str()) {
@@ -102,7 +110,7 @@ fn main() {
             let test_results = frontend::run_functions(ast);
             let run_time = timer.finish();
             ResultCount::print_test_result(test_results, Some(run_time.as_str()));
-        },
-        Err(e) => e.print_error()
+        }
+        Err(e) => e.print_error(),
     }
 }
