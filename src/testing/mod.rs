@@ -9,7 +9,7 @@ mod testing {
     use crate::abstract_syntax_tree::{ChimeraScriptAST, HttpCommand, HTTPVerb};
     use crate::err_handle::{ChimeraRuntimeFailure, VarTypes};
     use crate::literal::{Collection, Data, DataKind, Literal, NumberKind};
-    use crate::util::WebClient;
+    use crate::util::client::WebClient;
     use crate::variable_map::VariableMap;
 
     #[derive(Debug)]

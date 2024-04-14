@@ -5,7 +5,7 @@ use pest::Parser;
 use pest_derive::Parser;
 use crate::abstract_syntax_tree::{ChimeraScriptAST, Statement, Function, BlockContents};
 use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure};
-use crate::util::Timer;
+use crate::util::client::Timer;
 use crate::variable_map::VariableMap;
 
 pub struct Context {

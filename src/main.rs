@@ -9,8 +9,9 @@ mod variable_map;
 
 use err_handle::print_error;
 use frontend::ResultCount;
-use util::Timer;
-use util::{WebClient, RealClient};
+use util::client::Timer;
+use util::client::{WebClient, RealClient};
+use util::config::Config;
 
 extern crate reqwest;
 extern crate serde;
@@ -33,7 +34,10 @@ struct Args {
     /// Name of a specific test case to run
     // short means `name` can only be used as `-n <value>`
     #[arg(short)]
-    name: Option<String>
+    name: Option<String>,
+    /// Path to a config file
+    #[arg(short)]
+    config: String
 }
 
 static CLIENT: OnceLock<&(dyn WebClient + Sync)> = OnceLock::new();
@@ -48,6 +52,15 @@ fn system_checks() {
 fn main() {
     system_checks();
     let args = Args::parse();
+
+    let config = match Config::from_path_str(&args.config) {
+        Ok(config) => config,
+        Err(err_msg) => {
+            print_error(&err_msg);
+            return;
+        }
+    };
+
     let path = Path::new(&args.path);
     if !path.exists() {
         print_error(&format!("{} is not a valid path", &args.path));
@@ -76,8 +89,7 @@ fn main() {
     // lifetime, so the client must be placed into its own OnceLock. A little hacky, but functional.
     // The purpose of CLIENT is so the web client can be mocked by tests
     // TODO: make a client builder here, configure it, then build the client
-    // TODO: Set domain from a config file
-    let client = RealClient::new("http://127.0.0.1:5000".to_owned(), reqwest::blocking::Client::new());
+    let client = RealClient::new(config.get_target_address(), reqwest::blocking::Client::new());
     REAL_CLIENT.set(client).expect("Failed to set up web client");
     match CLIENT.set(REAL_CLIENT.get().unwrap()) {
         Ok(_) => (),
