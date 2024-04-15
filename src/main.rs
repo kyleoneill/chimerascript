@@ -22,7 +22,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::OnceLock;
 
-const FILE_EXTENSION: &'static str = "chs";
+const FILE_EXTENSION: &str = "chs";
 
 #[derive(Parser, Debug)]
 #[command(version)]

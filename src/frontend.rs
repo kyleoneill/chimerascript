@@ -25,6 +25,8 @@ pub enum Status {
     Error(ChimeraRuntimeFailure),
     ExpectedFailure,
     UnexpectedSuccess,
+    // TODO: Remove me
+    #[allow(dead_code)]
     Skip,
 }
 
@@ -162,12 +164,10 @@ impl TestResult {
 
     #[allow(dead_code)] // Used by tests
     pub fn passed(&self) -> bool {
-        match self.status {
-            Status::Success => true,
-            Status::UnexpectedSuccess => true,
-            Status::ExpectedFailure => true,
-            _ => false,
-        }
+        matches!(
+            self.status,
+            Status::Success | Status::UnexpectedSuccess | Status::ExpectedFailure
+        )
     }
 
     #[allow(dead_code)] // Used by tests
@@ -193,7 +193,7 @@ pub struct CScriptTokenPairs;
 pub fn parse_main(input: &str) -> Result<Pairs<Rule>, ChimeraCompileError> {
     match CScriptTokenPairs::parse(Rule::Main, input) {
         Ok(parsed) => Ok(parsed),
-        Err(e) => return Err(handle_ast_err(e)),
+        Err(e) => Err(handle_ast_err(e)),
     }
 }
 

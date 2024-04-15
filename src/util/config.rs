@@ -15,7 +15,7 @@ impl Config {
                 Ok(res) => Ok(res),
                 Err(e) => Err(format!("Failed to parse config file, {}", e.message())),
             },
-            Err(_) => return Err(format!("Failed to read config file with path {}", path_str)),
+            Err(_) => Err(format!("Failed to read config file with path {}", path_str)),
         }
     }
     pub fn get_target_address(&self) -> String {

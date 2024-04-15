@@ -38,10 +38,10 @@ mod testing {
             response_obj.insert(
                 "status_code".to_owned(),
                 Data::from_literal(Literal::Number(NumberKind::U64(match http_command.verb {
-                    HTTPVerb::GET => 200,
-                    HTTPVerb::DELETE => 200,
-                    HTTPVerb::POST => 201,
-                    HTTPVerb::PUT => 200,
+                    HTTPVerb::Get => 200,
+                    HTTPVerb::Delete => 200,
+                    HTTPVerb::Post => 201,
+                    HTTPVerb::Put => 200,
                 }))),
             );
 

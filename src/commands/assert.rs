@@ -15,28 +15,25 @@ pub fn assert_command(
     let right_binding = assert_command.right_value.resolve(context, variable_map)?;
     let right_data = right_binding.borrow(context)?;
     let assertion_passed = match assert_command.subcommand {
-        AssertSubCommand::LENGTH => {
+        AssertSubCommand::Length => {
             let assert_len = right_data.try_into_usize(&assert_command.right_value, context)?;
             let vec = left_data.try_into_list(assert_command.left_value.error_print(), context)?;
             vec.len() == assert_len
         }
-        AssertSubCommand::EQUALS => left_data.deref() == right_data.deref(),
-        AssertSubCommand::STATUS => {
+        AssertSubCommand::Equals => left_data.deref() == right_data.deref(),
+        AssertSubCommand::Status => {
             let res = match left_data.deref() {
-                DataKind::Collection(c) => match c {
-                    Collection::Object(obj) => match obj.get("status_code") {
-                        Some(status_code) => {
-                            let expected_code =
-                                right_data.try_into_u64(&assert_command.right_value, context)?;
-                            let status_as_num = status_code
-                                .borrow(context)?
-                                .deref()
-                                .try_into_u64(&assert_command.left_value, context)?;
-                            Some(expected_code == status_as_num)
-                        }
-                        None => None,
-                    },
-                    _ => None,
+                DataKind::Collection(Collection::Object(obj)) => match obj.get("status_code") {
+                    Some(status_code) => {
+                        let expected_code =
+                            right_data.try_into_u64(&assert_command.right_value, context)?;
+                        let status_as_num = status_code
+                            .borrow(context)?
+                            .deref()
+                            .try_into_u64(&assert_command.left_value, context)?;
+                        Some(expected_code == status_as_num)
+                    }
+                    None => None,
                 },
                 _ => None,
             };
@@ -51,7 +48,7 @@ pub fn assert_command(
                 }
             }
         }
-        AssertSubCommand::CONTAINS => match left_data.deref() {
+        AssertSubCommand::Contains => match left_data.deref() {
             DataKind::Collection(c) => c.contains(right_data, context)?,
             _ => {
                 return Err(ChimeraRuntimeFailure::VarWrongType(

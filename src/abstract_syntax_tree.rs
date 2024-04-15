@@ -33,9 +33,9 @@ impl ChimeraScriptAST {
         if main_pair.as_rule() != Rule::Main {
             panic!("Expected the first pair of a parse to be Rule::Main but it was not")
         };
-        let mut function_pairs = main_pair.into_inner();
+        let function_pairs = main_pair.into_inner();
         let mut functions: Vec<Function> = Vec::new();
-        while let Some(function_pair) = function_pairs.next() {
+        for function_pair in function_pairs {
             if function_pair.as_rule() == Rule::EOI {
                 break;
             }
@@ -55,8 +55,8 @@ impl ChimeraScriptAST {
             .expect("Rule::Function contained no inner pairs when it must have at least two");
         let mut decorators: Vec<Decorator> = Vec::new();
         if current_pair.as_rule() == Rule::Decorators {
-            let mut decorator_pairs = current_pair.into_inner();
-            while let Some(decorator_pair) = decorator_pairs.next() {
+            let decorator_pairs = current_pair.into_inner();
+            for decorator_pair in decorator_pairs {
                 match decorator_pair.as_rule() {
                     Rule::StrPlus => {
                         decorators.push(Decorator::Key(decorator_pair.as_str().to_owned()))
@@ -100,8 +100,8 @@ impl ChimeraScriptAST {
             panic!("Expected rule to be Rule::Block when parsing into a Vec<BlockContents>")
         };
         let mut block: Vec<BlockContents> = Vec::new();
-        let mut block_pair_inner = block_pair.into_inner();
-        while let Some(block_content) = block_pair_inner.next() {
+        let block_pair_inner = block_pair.into_inner();
+        for block_content in block_pair_inner {
             let content = match block_content.as_rule() {
                 Rule::Statement => {
                     BlockContents::Statement(ChimeraScriptAST::pair_to_statement(block_content)?)
@@ -127,8 +127,8 @@ impl ChimeraScriptAST {
             ));
         };
         let mut statements: Vec<Statement> = Vec::new();
-        let mut teardown_inner = teardown_pair.into_inner();
-        while let Some(teardown_statement) = teardown_inner.next() {
+        let teardown_inner = teardown_pair.into_inner();
+        for teardown_statement in teardown_inner {
             statements.push(ChimeraScriptAST::pair_to_statement(teardown_statement)?)
         }
         Ok(Teardown { statements })
@@ -158,13 +158,7 @@ impl ChimeraScriptAST {
 
                 // Peek ahead to see if our inner contains an optional Negation
                 let negate_assertion = match pairs.peek() {
-                    Some(next) => {
-                        if next.as_rule() == Rule::Negation {
-                            true
-                        } else {
-                            false
-                        }
-                    }
+                    Some(next) => next.as_rule() == Rule::Negation,
                     None => panic!(
                         "Expected a Rule::AssertCommand to contain inner pairs but it did not"
                     ),
@@ -187,14 +181,14 @@ impl ChimeraScriptAST {
                     ));
                 }
                 let subcommand = match subcommand_pair.as_span().as_str() {
-                    "EQUALS" => AssertSubCommand::EQUALS,
+                    "EQUALS" => AssertSubCommand::Equals,
                     "GTE" => AssertSubCommand::GTE,
                     "GT" => AssertSubCommand::GT,
                     "LTE" => AssertSubCommand::LTE,
                     "LT" => AssertSubCommand::LT,
-                    "STATUS" => AssertSubCommand::STATUS,
-                    "LENGTH" => AssertSubCommand::LENGTH,
-                    "CONTAINS" => AssertSubCommand::CONTAINS,
+                    "STATUS" => AssertSubCommand::Status,
+                    "LENGTH" => AssertSubCommand::Length,
+                    "CONTAINS" => AssertSubCommand::Contains,
                     _ => {
                         return Err(ChimeraCompileError::new(
                             "Got an invalid assertion subcommand value",
@@ -301,7 +295,7 @@ impl ChimeraScriptAST {
             .into_inner()
             .peek()
             .ok_or_else(|| no_pairs_panic("Value"))?;
-        return match inner.as_rule() {
+        match inner.as_rule() {
             Rule::LiteralValue => Ok(Value::Literal(
                 ChimeraScriptAST::parse_rule_to_literal_value(inner)?,
             )),
@@ -312,7 +306,7 @@ impl ChimeraScriptAST {
                 "Did not get a valid Value",
                 inner.line_col(),
             )),
-        };
+        }
     }
 
     fn parse_quotestring_rule(pair: Pair<Rule>) -> Result<String, ChimeraCompileError> {
@@ -353,30 +347,24 @@ impl ChimeraScriptAST {
                 match number_kind.as_rule() {
                     Rule::Float => match number_kind.as_str().parse::<f64>() {
                         Ok(as_float) => Ok(Literal::Number(NumberKind::F64(as_float))),
-                        Err(_) => {
-                            return Err(ChimeraCompileError::new(
-                                "Failed to parse a float",
-                                number_kind.line_col(),
-                            ))
-                        }
+                        Err(_) => Err(ChimeraCompileError::new(
+                            "Failed to parse a float",
+                            number_kind.line_col(),
+                        )),
                     },
                     Rule::SignedNumber => match number_kind.as_str().parse::<i64>() {
                         Ok(as_signed) => Ok(Literal::Number(NumberKind::I64(as_signed))),
-                        Err(_) => {
-                            return Err(ChimeraCompileError::new(
-                                "Failed to parse a signed number",
-                                number_kind.line_col(),
-                            ))
-                        }
+                        Err(_) => Err(ChimeraCompileError::new(
+                            "Failed to parse a signed number",
+                            number_kind.line_col(),
+                        )),
                     },
                     Rule::UnsignedNumber => match number_kind.as_str().parse::<u64>() {
                         Ok(as_unsigned) => Ok(Literal::Number(NumberKind::U64(as_unsigned))),
-                        Err(_) => {
-                            return Err(ChimeraCompileError::new(
-                                "Failed to parse an unsigned number",
-                                number_kind.line_col(),
-                            ))
-                        }
+                        Err(_) => Err(ChimeraCompileError::new(
+                            "Failed to parse an unsigned number",
+                            number_kind.line_col(),
+                        )),
                     },
                     _ => Err(ChimeraCompileError::new(
                         "Did not get a valid number",
@@ -387,12 +375,10 @@ impl ChimeraScriptAST {
             Rule::Boolean => match literal_value.as_str() {
                 "true" | "True" => Ok(Literal::Bool(true)),
                 "false" | "False" => Ok(Literal::Bool(false)),
-                _ => {
-                    return Err(ChimeraCompileError::new(
-                        "Did not get a valid boolean",
-                        literal_value.line_col(),
-                    ))
-                }
+                _ => Err(ChimeraCompileError::new(
+                    "Did not get a valid boolean",
+                    literal_value.line_col(),
+                )),
             },
             Rule::Null => Ok(Literal::Null),
             _ => Err(ChimeraCompileError::new(
@@ -409,15 +395,15 @@ impl ChimeraScriptAST {
                 pair.line_col(),
             ));
         }
-        let mut path_inner = pair.into_inner();
+        let path_inner = pair.into_inner();
         let mut build_path: Vec<Value> = Vec::new();
         let mut buffer: String = String::new();
-        while let Some(token) = path_inner.next() {
+        for token in path_inner {
             match token.as_rule() {
                 Rule::PathEndpoint => {
                     buffer.push('/');
-                    let mut endpoint_portion = token.into_inner();
-                    while let Some(pair) = endpoint_portion.next() {
+                    let endpoint_portion = token.into_inner();
+                    for pair in endpoint_portion {
                         let kind = pair
                             .into_inner()
                             .next()
@@ -533,10 +519,10 @@ impl ChimeraScriptAST {
             ));
         }
         let verb = match verb_token.as_str() {
-            "GET" => HTTPVerb::GET,
-            "PUT" => HTTPVerb::PUT,
-            "POST" => HTTPVerb::POST,
-            "DELETE" => HTTPVerb::DELETE,
+            "GET" => HTTPVerb::Get,
+            "PUT" => HTTPVerb::Put,
+            "POST" => HTTPVerb::Post,
+            "DELETE" => HTTPVerb::Delete,
             _ => {
                 return Err(ChimeraCompileError::new(
                     "Did not get a valid HTTP verb",
@@ -635,7 +621,7 @@ impl ChimeraScriptAST {
             .next()
             .ok_or_else(|| no_pairs_panic("Expression"))?;
         match first_token.as_rule() {
-            Rule::LiteralValue => Ok(Expression::LiteralExpression(
+            Rule::LiteralValue => Ok(Expression::Literal(
                 ChimeraScriptAST::parse_rule_to_literal_value(first_token)?,
             )),
             Rule::HttpCommand => ChimeraScriptAST::parse_rule_to_http_command(first_token),
@@ -648,30 +634,27 @@ impl ChimeraScriptAST {
                     Rule::ListNew => {
                         let mut list_new_pairs = list_expression_kind_token.into_inner();
                         let mut list_values: Vec<Value> = Vec::new();
-                        // Don't ok_or_else here as we might be making an empty list and there may be no more pairs
-                        match list_new_pairs.next() {
-                            Some(mut list_value_token) => {
-                                // A ListNew contains zero or more CommaSeparatedValues, read them all
-                                while list_value_token.as_rule() == Rule::CommaSeparatedValues {
-                                    let mut inner = list_value_token.into_inner();
-                                    let literal_token = inner
-                                        .next()
-                                        .ok_or_else(|| no_pairs_panic("CommaSeparatedValues"))?;
-                                    let value =
-                                        ChimeraScriptAST::parse_rule_to_value(literal_token)?;
-                                    list_values.push(value);
-                                    list_value_token = list_new_pairs
-                                        .next()
-                                        .ok_or_else(|| no_pairs_panic("CommaSeparatedValues"))?;
-                                }
-                                // After all CommaSeparatedValues are read the final pair is going to be a Value
-                                let value =
-                                    ChimeraScriptAST::parse_rule_to_value(list_value_token)?;
+
+                        // Check for potential list items, contained in Rule::CommaSeparatedValues
+                        if let Some(mut list_value_token) = list_new_pairs.next() {
+                            // A ListNew contains zero or more CommaSeparatedValues, read them all
+                            while list_value_token.as_rule() == Rule::CommaSeparatedValues {
+                                let mut inner = list_value_token.into_inner();
+                                let literal_token = inner
+                                    .next()
+                                    .ok_or_else(|| no_pairs_panic("CommaSeparatedValues"))?;
+                                let value = ChimeraScriptAST::parse_rule_to_value(literal_token)?;
                                 list_values.push(value);
+                                list_value_token = list_new_pairs
+                                    .next()
+                                    .ok_or_else(|| no_pairs_panic("CommaSeparatedValues"))?;
                             }
-                            None => (),
-                        };
-                        Ok(Expression::ListExpression(ListExpression::New(list_values)))
+                            // After all CommaSeparatedValues are read the final pair is going to be a Value
+                            let value = ChimeraScriptAST::parse_rule_to_value(list_value_token)?;
+                            list_values.push(value);
+                        }
+
+                        Ok(Expression::List(ListExpression::New(list_values)))
                     }
                     Rule::ListCommandExpr => {
                         let mut list_command_expr_tokens = list_expression_kind_token.into_inner();
@@ -715,27 +698,23 @@ impl ChimeraScriptAST {
                                 }
                             },
                         };
-                        Ok(Expression::ListExpression(ListExpression::ListArgument(
+                        Ok(Expression::List(ListExpression::ListArgument(
                             ListCommand {
                                 list_name,
                                 operation,
                             },
                         )))
                     }
-                    _ => {
-                        return Err(ChimeraCompileError::new(
-                            "Did not get a valid list expression",
-                            list_expression_kind_token.line_col(),
-                        ))
-                    }
+                    _ => Err(ChimeraCompileError::new(
+                        "Did not get a valid list expression",
+                        list_expression_kind_token.line_col(),
+                    )),
                 }
             }
-            _ => {
-                return Err(ChimeraCompileError::new(
-                    "Did not get a valid expression",
-                    first_token.line_col(),
-                ))
-            }
+            _ => Err(ChimeraCompileError::new(
+                "Did not get a valid expression",
+                first_token.line_col(),
+            )),
         }
     }
 }
@@ -805,9 +784,9 @@ pub struct AssignmentExpr {
 
 #[derive(Debug)]
 pub enum Expression {
-    LiteralExpression(Literal),
+    Literal(Literal),
     HttpCommand(HttpCommand),
-    ListExpression(ListExpression),
+    List(ListExpression),
 }
 
 #[derive(Debug)]
@@ -853,7 +832,7 @@ impl std::fmt::Display for Value {
 impl Value {
     pub fn error_print(&self) -> String {
         match self {
-            Value::Literal(literal) => format!("value {}", literal.to_string()),
+            Value::Literal(literal) => format!("value {}", literal),
             Value::Variable(var_name) => format!("var '{}'", var_name.to_owned()),
         }
     }
@@ -866,10 +845,10 @@ impl Value {
         match self {
             Value::Literal(val) => Ok(Data::from_literal(val.clone())),
             Value::Variable(var_name) => {
-                let accessors: Vec<&str> = var_name.split(".").collect();
+                let accessors: Vec<&str> = var_name.split('.').collect();
                 let value = variable_map.get(context, accessors[0])?;
                 if accessors.len() == 1 {
-                    return Ok(value.clone());
+                    Ok(value.clone())
                 } else {
                     Ok(value.resolve_access(accessors, context)?)
                 }
@@ -879,28 +858,29 @@ impl Value {
 }
 
 #[derive(Debug, PartialEq)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum AssertSubCommand {
-    EQUALS,
+    Equals,
     GTE,
     GT,
     LTE,
     LT,
-    STATUS,
-    LENGTH,
-    CONTAINS,
+    Status,
+    Length,
+    Contains,
 }
 
 impl std::fmt::Display for AssertSubCommand {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            AssertSubCommand::EQUALS => write!(f, "equal"),
+            AssertSubCommand::Equals => write!(f, "equal"),
             AssertSubCommand::GTE => write!(f, "be greater than or equal to"),
             AssertSubCommand::GT => write!(f, "be greater than"),
             AssertSubCommand::LTE => write!(f, "be less than or equal to"),
             AssertSubCommand::LT => write!(f, "be less than"),
-            AssertSubCommand::STATUS => write!(f, "have a status code of"),
-            AssertSubCommand::LENGTH => write!(f, "have a length of"),
-            AssertSubCommand::CONTAINS => write!(f, "to contain"),
+            AssertSubCommand::Status => write!(f, "have a status code of"),
+            AssertSubCommand::Length => write!(f, "have a length of"),
+            AssertSubCommand::Contains => write!(f, "to contain"),
         }
     }
 }
@@ -912,6 +892,8 @@ pub struct HttpCommand {
     pub query_params: Vec<HttpAssignment>,
     pub http_assignments: Vec<HttpAssignment>,
     pub headers: Vec<HttpAssignment>,
+    // TODO: REMOVE THIS WHEN IMPLEMENTING KV PAIRS
+    #[allow(dead_code)]
     key_val_pairs: Vec<KeyValuePair>,
 }
 
@@ -1029,6 +1011,8 @@ pub struct HttpAssignment {
 }
 
 #[derive(Debug)]
+// TODO: REMOVE ALLOW DEAD CODE WHEN IMPLEMENTING KV PAIRS, HERE AND IN HTTP COMMAND STRUCT
+#[allow(dead_code)]
 pub struct KeyValuePair {
     key: String,
     value: Value,
@@ -1063,7 +1047,7 @@ impl From<Statement> for ListExpression {
     fn from(value: Statement) -> Self {
         match value {
             Statement::Expression(expr) => match expr {
-                Expression::ListExpression(list_command) => list_command,
+                Expression::List(list_command) => list_command,
                 _ => panic!("tried to use an Expression as a ListExpression when it was not one"),
             },
             _ => panic!("tried to use a Statement as an Expression when it was not one"),
@@ -1073,10 +1057,10 @@ impl From<Statement> for ListExpression {
 
 #[derive(Debug, PartialEq)]
 pub enum HTTPVerb {
-    GET,
-    PUT,
-    POST,
-    DELETE,
+    Get,
+    Put,
+    Post,
+    Delete,
 }
 
 /*
@@ -1112,7 +1096,7 @@ mod ast_tests {
                 assert_eq!(assert_command.negate_assertion, false, "negate_assertion should be false for an assertion which does not contain 'NOT'.");
                 assert_eq!(
                     assert_command.subcommand,
-                    AssertSubCommand::EQUALS,
+                    AssertSubCommand::Equals,
                     "Assertion using EQUALS should have an AssertSubCommand::Equals subcommand."
                 );
                 assert_eq!(
@@ -1145,13 +1129,13 @@ mod ast_tests {
     fn comments() {
         let assertion_with_comment: AssertCommand =
             str_to_statement("ASSERT EQUALS 1 1; //this assertion ends with a comment").into();
-        assert_eq!(assertion_with_comment.subcommand, AssertSubCommand::EQUALS);
+        assert_eq!(assertion_with_comment.subcommand, AssertSubCommand::Equals);
 
         let assertion_with_midline_comment: AssertCommand =
             str_to_statement("ASSERT EQUALS 1 /*this is a midline comment*/ 1;").into();
         assert_eq!(
             assertion_with_midline_comment.subcommand,
-            AssertSubCommand::EQUALS
+            AssertSubCommand::Equals
         );
         assert_eq!(
             assertion_with_midline_comment.left_value,
@@ -1174,7 +1158,7 @@ mod ast_tests {
                 );
                 assert_eq!(
                     assert_command.subcommand,
-                    AssertSubCommand::EQUALS,
+                    AssertSubCommand::Equals,
                     "Assertion using EQUALS should have an AssertSubCommand::Equals subcommand."
                 );
                 assert_eq!(assert_command.left_value, Value::Literal(Literal::Number(NumberKind::U64(1))), "Assertion with a numerical literal should have a Value::Literal(Literal::Int()) value.");
@@ -1250,14 +1234,14 @@ mod ast_tests {
         .map(|x| str_to_statement(x).into())
         .collect();
         assert_eq!(trees.len(), 8);
-        assert_eq!(trees[0].subcommand, AssertSubCommand::EQUALS);
+        assert_eq!(trees[0].subcommand, AssertSubCommand::Equals);
         assert_eq!(trees[1].subcommand, AssertSubCommand::GTE);
         assert_eq!(trees[2].subcommand, AssertSubCommand::GT);
         assert_eq!(trees[3].subcommand, AssertSubCommand::LTE);
         assert_eq!(trees[4].subcommand, AssertSubCommand::LT);
-        assert_eq!(trees[5].subcommand, AssertSubCommand::STATUS);
-        assert_eq!(trees[6].subcommand, AssertSubCommand::LENGTH);
-        assert_eq!(trees[7].subcommand, AssertSubCommand::CONTAINS);
+        assert_eq!(trees[5].subcommand, AssertSubCommand::Status);
+        assert_eq!(trees[6].subcommand, AssertSubCommand::Length);
+        assert_eq!(trees[7].subcommand, AssertSubCommand::Contains);
     }
 
     #[test]
@@ -1289,7 +1273,7 @@ mod ast_tests {
             Statement::AssignmentExpr(assignment_expr) => {
                 assert_eq!(assignment_expr.var_name, "foo".to_owned());
                 match assignment_expr.expression {
-                    Expression::LiteralExpression(literal_expression) => {
+                    Expression::Literal(literal_expression) => {
                         match literal_expression {
                             Literal::Number(numberkind) => {
                                 assert_eq!(numberkind, NumberKind::U64(5));
@@ -1316,14 +1300,14 @@ mod ast_tests {
                 .map(|x| str_to_statement(x).into())
                 .collect();
         assert_eq!(http_commands.len(), 4);
-        assert_eq!(http_commands[0].verb, HTTPVerb::GET);
+        assert_eq!(http_commands[0].verb, HTTPVerb::Get);
         assert_eq!(
             http_commands[0].path,
             vec![Value::from_str("/foo/bar").unwrap()]
         );
-        assert_eq!(http_commands[1].verb, HTTPVerb::PUT);
-        assert_eq!(http_commands[2].verb, HTTPVerb::POST);
-        assert_eq!(http_commands[3].verb, HTTPVerb::DELETE);
+        assert_eq!(http_commands[1].verb, HTTPVerb::Put);
+        assert_eq!(http_commands[2].verb, HTTPVerb::Post);
+        assert_eq!(http_commands[3].verb, HTTPVerb::Delete);
 
         // HTTP expression with query params of varying types
         let with_path_assignments: HttpCommand = str_to_statement(
@@ -1358,7 +1342,7 @@ mod ast_tests {
 
         // HTTP command with a path, query params, body params, and key/value pairs
         let full_expression: HttpCommand = str_to_statement("GET /foo/bar/baz?foo=5&another=\"bar\" some_num=5 some_str=\"value\" timeout=>60 boolKey=>false;").into();
-        assert_eq!(full_expression.verb, HTTPVerb::GET);
+        assert_eq!(full_expression.verb, HTTPVerb::Get);
         assert_eq!(
             full_expression.path,
             vec![Value::from_str("/foo/bar/baz").unwrap()]

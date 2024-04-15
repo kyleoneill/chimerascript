@@ -46,23 +46,23 @@ impl WebClient for RealClient {
 
         // Make the web request
         let res = match http_command.verb {
-            HTTPVerb::GET => self
+            HTTPVerb::Get => self
                 .client
                 .get(resolved_path.as_str())
                 .headers(headers)
                 .send(),
-            HTTPVerb::DELETE => self
+            HTTPVerb::Delete => self
                 .client
                 .delete(resolved_path.as_str())
                 .headers(headers)
                 .send(),
-            HTTPVerb::POST => self
+            HTTPVerb::Post => self
                 .client
                 .post(resolved_path.as_str())
                 .json(&body_map)
                 .headers(headers)
                 .send(),
-            HTTPVerb::PUT => self
+            HTTPVerb::Put => self
                 .client
                 .put(resolved_path.as_str())
                 .json(&body_map)
@@ -72,14 +72,8 @@ impl WebClient for RealClient {
         match res {
             Ok(response) => {
                 // Have to store the status here as reading the body consumes the response
-                let status_code: u64 = response
-                    .status()
-                    .as_u16()
-                    .try_into()
-                    .expect("Failed to convert a u16 to a u64");
-                let body: DataKind = response
-                    .json()
-                    .unwrap_or_else(|_| DataKind::Literal(Literal::Null));
+                let status_code: u64 = response.status().as_u16().into();
+                let body: DataKind = response.json().unwrap_or(DataKind::Literal(Literal::Null));
                 let mut http_response_obj: HashMap<String, Data> = HashMap::new();
                 http_response_obj.insert(
                     "status_code".to_owned(),

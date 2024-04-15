@@ -131,46 +131,36 @@ impl Display for ChimeraRuntimeFailure {
 impl PartialEq for ChimeraRuntimeFailure {
     fn eq(&self, other: &Self) -> bool {
         match self {
-            ChimeraRuntimeFailure::VarNotFound(_, _) => match other {
-                ChimeraRuntimeFailure::VarNotFound(_, _) => true,
-                _ => false,
-            },
-            ChimeraRuntimeFailure::VarWrongType(_, _, _) => match other {
-                ChimeraRuntimeFailure::VarWrongType(_, _, _) => true,
-                _ => false,
-            },
-            ChimeraRuntimeFailure::TestFailure(_, _) => match other {
-                ChimeraRuntimeFailure::TestFailure(_, _) => true,
-                _ => false,
-            },
-            ChimeraRuntimeFailure::InternalError(_) => match other {
-                ChimeraRuntimeFailure::InternalError(_) => true,
-                _ => false,
-            },
-            ChimeraRuntimeFailure::WebRequestFailure(_, _) => match other {
-                ChimeraRuntimeFailure::WebRequestFailure(_, _) => true,
-                _ => false,
-            },
-            ChimeraRuntimeFailure::BadSubfieldAccess(_, _, _) => match other {
-                ChimeraRuntimeFailure::BadSubfieldAccess(_, _, _) => true,
-                _ => false,
-            },
-            ChimeraRuntimeFailure::TriedToIndexWithNonNumber(_) => match other {
-                ChimeraRuntimeFailure::TriedToIndexWithNonNumber(_) => true,
-                _ => false,
-            },
-            ChimeraRuntimeFailure::OutOfBounds(_) => match other {
-                ChimeraRuntimeFailure::OutOfBounds(_) => true,
-                _ => false,
-            },
-            ChimeraRuntimeFailure::BorrowError(_, _) => match other {
-                ChimeraRuntimeFailure::BorrowError(_, _) => true,
-                _ => false,
-            },
-            ChimeraRuntimeFailure::InvalidHeader(_, _) => match other {
-                ChimeraRuntimeFailure::InvalidHeader(_, _) => true,
-                _ => false,
-            },
+            ChimeraRuntimeFailure::VarNotFound(_, _) => {
+                matches!(other, ChimeraRuntimeFailure::VarNotFound(_, _))
+            }
+            ChimeraRuntimeFailure::VarWrongType(_, _, _) => {
+                matches!(other, ChimeraRuntimeFailure::VarWrongType(_, _, _))
+            }
+            ChimeraRuntimeFailure::TestFailure(_, _) => {
+                matches!(other, ChimeraRuntimeFailure::TestFailure(_, _))
+            }
+            ChimeraRuntimeFailure::InternalError(_) => {
+                matches!(other, ChimeraRuntimeFailure::InternalError(_))
+            }
+            ChimeraRuntimeFailure::WebRequestFailure(_, _) => {
+                matches!(other, ChimeraRuntimeFailure::WebRequestFailure(_, _))
+            }
+            ChimeraRuntimeFailure::BadSubfieldAccess(_, _, _) => {
+                matches!(other, ChimeraRuntimeFailure::BadSubfieldAccess(_, _, _))
+            }
+            ChimeraRuntimeFailure::TriedToIndexWithNonNumber(_) => {
+                matches!(other, ChimeraRuntimeFailure::TriedToIndexWithNonNumber(_))
+            }
+            ChimeraRuntimeFailure::OutOfBounds(_) => {
+                matches!(other, ChimeraRuntimeFailure::OutOfBounds(_))
+            }
+            ChimeraRuntimeFailure::BorrowError(_, _) => {
+                matches!(other, ChimeraRuntimeFailure::BorrowError(_, _))
+            }
+            ChimeraRuntimeFailure::InvalidHeader(_, _) => {
+                matches!(other, ChimeraRuntimeFailure::InvalidHeader(_, _))
+            }
         }
     }
 }

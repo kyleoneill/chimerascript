@@ -29,29 +29,29 @@ impl PartialEq for NumberKind {
         match self {
             NumberKind::I64(signed) => match other {
                 NumberKind::I64(other_signed) => signed == other_signed,
-                NumberKind::U64(other_unsigned) => match i64::try_from(other_unsigned.clone()) {
+                NumberKind::U64(other_unsigned) => match i64::try_from(*other_unsigned) {
                     Ok(r) => signed == &r,
-                    Err(_) => return false,
+                    Err(_) => false,
                 },
                 NumberKind::F64(other_float) => {
-                    let self_as_float = signed.clone() as f64;
-                    return self_as_float.eq(other_float);
+                    let self_as_float = *signed as f64;
+                    self_as_float.eq(other_float)
                 }
             },
             NumberKind::U64(unsigned) => match other {
-                NumberKind::I64(other_signed) => match u64::try_from(other_signed.clone()) {
+                NumberKind::I64(other_signed) => match u64::try_from(*other_signed) {
                     Ok(r) => unsigned == &r,
-                    Err(_) => return false,
+                    Err(_) => false,
                 },
                 NumberKind::U64(other_unsigned) => unsigned == other_unsigned,
                 NumberKind::F64(other_float) => {
-                    let self_as_float = unsigned.clone() as f64;
-                    return self_as_float.eq(other_float);
+                    let self_as_float = *unsigned as f64;
+                    self_as_float.eq(other_float)
                 }
             },
             NumberKind::F64(float) => match other {
-                NumberKind::I64(other_signed) => float == &(other_signed.clone() as f64),
-                NumberKind::U64(other_unsigned) => float == &(other_unsigned.clone() as f64),
+                NumberKind::I64(other_signed) => float == &(*other_signed as f64),
+                NumberKind::U64(other_unsigned) => float == &(*other_unsigned as f64),
                 NumberKind::F64(other_float) => float == other_float,
             },
         }
@@ -63,40 +63,40 @@ impl PartialOrd for NumberKind {
         match self {
             NumberKind::I64(signed) => {
                 match other {
-                    NumberKind::I64(other_signed) => return Some(signed.cmp(other_signed)),
+                    NumberKind::I64(other_signed) => Some(signed.cmp(other_signed)),
                     NumberKind::U64(other_unsigned) => {
-                        match i64::try_from(other_unsigned.clone()) {
+                        match i64::try_from(*other_unsigned) {
                             Ok(v) => Some(signed.cmp(&v)),
                             // If a u64 cannot be converted into an i64 then it must be greater than
                             // i64::MAX. The i64 self is less than the u64 other
-                            Err(_) => return Some(Ordering::Less),
+                            Err(_) => Some(Ordering::Less),
                         }
                     }
                     NumberKind::F64(other_float) => {
-                        let self_as_float = signed.clone() as f64;
+                        let self_as_float = *signed as f64;
                         self_as_float.partial_cmp(other_float)
                     }
                 }
             }
             NumberKind::U64(unsigned) => {
                 match other {
-                    NumberKind::I64(other_signed) => match u64::try_from(other_signed.clone()) {
+                    NumberKind::I64(other_signed) => match u64::try_from(*other_signed) {
                         Ok(v) => Some(unsigned.cmp(&v)),
                         // If an i64 cannot be converted into a u64 then it must be less than 0.
                         // The u64 self, being positive, must be greater than the i64 other
-                        Err(_) => return Some(Ordering::Greater),
+                        Err(_) => Some(Ordering::Greater),
                     },
                     NumberKind::U64(other_unsigned) => Some(unsigned.cmp(other_unsigned)),
                     NumberKind::F64(other_float) => {
-                        let self_as_float = unsigned.clone() as f64;
+                        let self_as_float = *unsigned as f64;
                         self_as_float.partial_cmp(other_float)
                     }
                 }
             }
             NumberKind::F64(float) => {
                 let resolved_other: f64 = match other {
-                    NumberKind::I64(other_signed) => other_signed.clone() as f64,
-                    NumberKind::U64(other_unsigned) => other_unsigned.clone() as f64,
+                    NumberKind::I64(other_signed) => *other_signed as f64,
+                    NumberKind::U64(other_unsigned) => *other_unsigned as f64,
                     NumberKind::F64(other_float) => return float.partial_cmp(other_float),
                 };
                 float.partial_cmp(&resolved_other)
@@ -116,10 +116,10 @@ impl Display for NumberKind {
 }
 
 impl NumberKind {
-    pub fn to_usize(&self) -> Option<usize> {
+    pub fn to_usize(self) -> Option<usize> {
         match self {
-            NumberKind::I64(signed) => usize::try_from(signed.clone()).ok(),
-            NumberKind::U64(unsigned) => usize::try_from(unsigned.clone()).ok(),
+            NumberKind::I64(signed) => usize::try_from(signed).ok(),
+            NumberKind::U64(unsigned) => usize::try_from(unsigned).ok(),
             NumberKind::F64(_) => None,
         }
     }
@@ -128,13 +128,13 @@ impl NumberKind {
         came_from: &Value,
         context: &Context,
     ) -> Result<usize, ChimeraRuntimeFailure> {
-        Ok(self.to_usize().ok_or_else(|| {
-            return ChimeraRuntimeFailure::VarWrongType(
+        self.to_usize().ok_or_else(|| {
+            ChimeraRuntimeFailure::VarWrongType(
                 came_from.error_print(),
                 VarTypes::Unsigned,
                 context.current_line,
-            );
-        })?)
+            )
+        })
     }
 }
 
@@ -225,13 +225,11 @@ impl Data {
             DataKind::Collection(c) => match c {
                 Collection::Object(obj) => match obj.get(accessor) {
                     Some(val) => val.recursive_access(accessors, context, var_name),
-                    None => {
-                        return Err(ChimeraRuntimeFailure::BadSubfieldAccess(
-                            Some(var_name),
-                            accessor.to_string(),
-                            context.current_line,
-                        ))
-                    }
+                    None => Err(ChimeraRuntimeFailure::BadSubfieldAccess(
+                        Some(var_name),
+                        accessor.to_string(),
+                        context.current_line,
+                    )),
                 },
                 Collection::List(list) => {
                     let index: usize = match accessor.parse() {
@@ -244,19 +242,15 @@ impl Data {
                     };
                     match list.get(index) {
                         Some(val) => val.recursive_access(accessors, context, var_name),
-                        None => {
-                            return Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line))
-                        }
+                        None => Err(ChimeraRuntimeFailure::OutOfBounds(context.current_line)),
                     }
                 }
             },
-            DataKind::Literal(_) => {
-                return Err(ChimeraRuntimeFailure::BadSubfieldAccess(
-                    Some(var_name),
-                    accessor.to_string(),
-                    context.current_line,
-                ))
-            }
+            DataKind::Literal(_) => Err(ChimeraRuntimeFailure::BadSubfieldAccess(
+                Some(var_name),
+                accessor.to_string(),
+                context.current_line,
+            )),
         }
     }
 }
@@ -270,8 +264,8 @@ pub enum DataKind {
 impl Display for DataKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            DataKind::Collection(c) => write!(f, "{}", c.to_string()),
-            DataKind::Literal(l) => write!(f, "{}", l.to_string()),
+            DataKind::Collection(c) => write!(f, "{}", c),
+            DataKind::Literal(l) => write!(f, "{}", l),
         }
     }
 }
@@ -307,6 +301,8 @@ impl DataKind {
     // TODO: Some of these try_into's take a Value and some take a String for came_from,
     //       this should be made consistent
     //       https://github.com/kyleoneill/chimerascript/issues/33
+    // TODO: Use this function, remove allow dead_code
+    #[allow(dead_code)]
     pub fn try_into_literal(
         &self,
         came_from: &Value,
@@ -326,13 +322,13 @@ impl DataKind {
         came_from: &Value,
         context: &Context,
     ) -> Result<NumberKind, ChimeraRuntimeFailure> {
-        Ok(self.to_number().ok_or_else(|| {
-            return ChimeraRuntimeFailure::VarWrongType(
+        self.to_number().ok_or_else(|| {
+            ChimeraRuntimeFailure::VarWrongType(
                 came_from.error_print(),
                 VarTypes::Number,
                 context.current_line,
-            );
-        })?)
+            )
+        })
     }
     pub fn try_into_usize(
         &self,
@@ -347,29 +343,23 @@ impl DataKind {
         came_from: &Value,
         context: &Context,
     ) -> Result<u64, ChimeraRuntimeFailure> {
-        if let Some(number) = self.to_number() {
-            if let NumberKind::U64(unsigned) = number {
-                return Ok(unsigned);
-            }
+        if let Some(NumberKind::U64(unsigned)) = self.to_number() {
+            return Ok(unsigned);
         };
-        return Err(ChimeraRuntimeFailure::VarWrongType(
+        Err(ChimeraRuntimeFailure::VarWrongType(
             came_from.error_print(),
             VarTypes::Unsigned,
             context.current_line,
-        ));
+        ))
     }
     pub fn try_into_list(
         &self,
         came_from: String,
         context: &Context,
     ) -> Result<&Vec<Data>, ChimeraRuntimeFailure> {
-        Ok(self.to_list().ok_or_else(|| {
-            return ChimeraRuntimeFailure::VarWrongType(
-                came_from,
-                VarTypes::List,
-                context.current_line,
-            );
-        })?)
+        self.to_list().ok_or({
+            ChimeraRuntimeFailure::VarWrongType(came_from, VarTypes::List, context.current_line)
+        })
     }
     pub fn try_into_string(
         &self,
@@ -380,13 +370,9 @@ impl DataKind {
             Self::Literal(literal) => literal.to_str(),
             Self::Collection(_) => None,
         };
-        Ok(attempt.ok_or_else(|| {
-            return ChimeraRuntimeFailure::VarWrongType(
-                came_from,
-                VarTypes::String,
-                context.current_line,
-            );
-        })?)
+        attempt.ok_or({
+            ChimeraRuntimeFailure::VarWrongType(came_from, VarTypes::String, context.current_line)
+        })
     }
 }
 
@@ -426,7 +412,7 @@ impl PartialEq for Collection {
                     if self_list.len() != other_list.len() {
                         return false;
                     };
-                    (0..self_list.len()).into_iter().all(|i| {
+                    (0..self_list.len()).all(|i| {
                         self_list[i]
                             .borrow(&fake_context)
                             .expect("Failed to borrow list member")
@@ -462,7 +448,7 @@ impl Display for Collection {
             Collection::List(list) => {
                 // TODO: Should not be doing unwrap here, get rid of fake_context
                 let list_as_str = list
-                    .into_iter()
+                    .iter()
                     .map(|c| c.borrow(&fake_context).unwrap().to_string())
                     .collect::<Vec<String>>()
                     .join(", ");
@@ -527,7 +513,7 @@ impl From<Statement> for Literal {
     fn from(statement: Statement) -> Self {
         match statement {
             Statement::Expression(expr) => match expr {
-                crate::abstract_syntax_tree::Expression::LiteralExpression(literal) => literal,
+                crate::abstract_syntax_tree::Expression::Literal(literal) => literal,
                 _ => panic!("Tried to convert a statement to a Literal but it was not one"),
             },
             _ => panic!(
@@ -602,31 +588,21 @@ impl<'de> Deserialize<'de> for DataKind {
                 // TODO: This fixes an issue I ran into, but this will cause a new problem of silently converting user
                 //       input if a user _wants_ to use a stringified number. If a user expects the value "5" here they
                 //       might not understand why they keep getting u64::5. This is not a permanent fix
-                match v.parse::<u64>() {
-                    Ok(unsigned_int) => {
-                        return Ok(DataKind::Literal(Literal::Number(NumberKind::U64(
-                            unsigned_int,
-                        ))))
-                    }
-                    Err(_) => match v.parse::<i64>() {
-                        Ok(signed_int) => {
-                            return Ok(DataKind::Literal(Literal::Number(NumberKind::I64(
-                                signed_int,
-                            ))))
-                        }
-                        Err(_) => match v.parse::<f64>() {
-                            Ok(float) => {
-                                return Ok(DataKind::Literal(Literal::Number(NumberKind::F64(
-                                    float,
-                                ))))
-                            }
-                            Err(_) => (),
-                        },
-                    },
+                if let Ok(unsigned_int) = v.parse::<u64>() {
+                    return Ok(DataKind::Literal(Literal::Number(NumberKind::U64(
+                        unsigned_int,
+                    ))));
                 }
-                match v.parse::<bool>() {
-                    Ok(boolean) => return Ok(DataKind::Literal(Literal::Bool(boolean))),
-                    Err(_) => (),
+                if let Ok(signed_int) = v.parse::<i64>() {
+                    return Ok(DataKind::Literal(Literal::Number(NumberKind::I64(
+                        signed_int,
+                    ))));
+                }
+                if let Ok(float) = v.parse::<f64>() {
+                    return Ok(DataKind::Literal(Literal::Number(NumberKind::F64(float))));
+                }
+                if let Ok(boolean) = v.parse::<bool>() {
+                    return Ok(DataKind::Literal(Literal::Bool(boolean)));
                 }
                 Ok(DataKind::Literal(Literal::String(v)))
             }
