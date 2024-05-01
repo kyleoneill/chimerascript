@@ -8,6 +8,7 @@ mod testing {
     use crate::variable_map::VariableMap;
     use crate::CLIENT;
     use std::collections::HashMap;
+    use std::ffi::OsStr;
     use std::fs;
     use std::path::Path;
     use std::sync::{Once, OnceLock};
@@ -115,7 +116,7 @@ mod testing {
     fn results_from_filename(filename: &str) -> Vec<TestResult> {
         initialize();
         let ast = read_cs_file(filename);
-        run_functions(ast)
+        run_functions(ast,OsStr::new(filename))
     }
 
     fn assert_test_pass(result: &TestResult, filename: &str, while_doing: &str) {
@@ -210,7 +211,7 @@ mod testing {
         let filename = "simplest_test.chs";
         let ast = read_cs_file(filename);
         assert_eq!(ast.functions.len(), 1, "Should only get a single test for a test file which contains one test case but got multiple");
-        let res = run_functions(ast);
+        let res = run_functions(ast, OsStr::new(filename));
         assert_eq!(
             res.len(),
             1,
