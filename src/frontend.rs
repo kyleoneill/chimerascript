@@ -1,10 +1,11 @@
 use crate::abstract_syntax_tree::{BlockContents, ChimeraScriptAST, Function, Statement};
 use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure};
-use crate::util::client::Timer;
+use crate::util::timer::Timer;
 use crate::variable_map::VariableMap;
 use pest::iterators::Pairs;
 use pest::Parser;
 use pest_derive::Parser;
+use std::ffi::OsStr;
 use std::fmt::{Display, Formatter};
 use std::iter::Sum;
 
@@ -89,7 +90,7 @@ impl ResultCount {
             "FAILED"
         }
     }
-    fn print_with_time(&self, time_taken: &str) {
+    pub fn print_with_time(&self, time_taken: &str) {
         println!(
             "Ran {} tests in {} with {} successes, {} failures, and {} errors\n\n{}",
             self.total_tests,
@@ -100,14 +101,16 @@ impl ResultCount {
             self.overall_result()
         )
     }
-    pub fn print_test_result(results: Vec<TestResult>, maybe_time_taken: Option<&str>) {
-        // Not really a fan of how printing with or without time is being handled here, and how the Display impl is
-        // being mostly ignored. Should be a way to refactor this
-        let result_count: ResultCount = results.iter().map(|x| x.get_result_counts()).sum();
-        match maybe_time_taken {
-            Some(time_taken) => result_count.print_with_time(time_taken),
-            None => println!("{}", result_count),
-        }
+
+    // This is used by a test
+    #[allow(dead_code)]
+    pub fn success_count(&self) -> usize {
+        self.success
+    }
+
+    #[allow(dead_code)]
+    pub fn from_test_results(results: Vec<TestResult>) -> Self {
+        results.iter().map(|x| x.get_result_counts()).sum()
     }
 }
 
@@ -197,15 +200,41 @@ pub fn parse_main(input: &str) -> Result<Pairs<Rule>, ChimeraCompileError> {
     }
 }
 
-// TODO: Have to support running a test by name. Should just add a new function for it. Search an ast.functions
-//       for a test/nested-test of a given name and then run that test and its direct parents back to the top
-//       of the stack to the outermost test
-pub fn run_functions(ast: ChimeraScriptAST) -> Vec<TestResult> {
+pub fn run_functions(ast: ChimeraScriptAST, filename: &OsStr) -> Vec<TestResult> {
     let mut results: Vec<TestResult> = Vec::new();
+    print_in_function(
+        &format!(
+            "RUNNING FILE {}",
+            filename.to_str().expect("Failed to convert OsStr to path")
+        ),
+        0,
+    );
     for function in ast.functions {
         if function.is_test_function() {
             let mut function_variables = VariableMap::new();
-            results.push(run_test_function(function, &mut function_variables, 0));
+            results.push(run_test_function(function, &mut function_variables, 1));
+        }
+    }
+    results
+}
+
+pub fn run_function_by_name(
+    ast: ChimeraScriptAST,
+    filename: &OsStr,
+    function_name: &str,
+) -> Vec<TestResult> {
+    let mut results: Vec<TestResult> = Vec::new();
+    print_in_function(
+        &format!(
+            "RUNNING FILE {}",
+            filename.to_str().expect("Failed to convert OsStr to path")
+        ),
+        0,
+    );
+    for function in ast.functions {
+        if function.is_test_function() && function.has_name(function_name) {
+            let mut function_variables = VariableMap::new();
+            results.push(run_test_function(function, &mut function_variables, 1));
         }
     }
     results

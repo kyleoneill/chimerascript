@@ -1,6 +1,26 @@
 use std::fmt::{Display, Formatter};
 
 #[derive(Debug)]
+pub struct CLIError {
+    error_msg: String,
+    // TODO: This is a hack to reconcile resolving two different error types in main.rs
+    //       Should really handle this in a cleaner way
+    pub already_reported: bool,
+}
+
+impl CLIError {
+    pub fn new(error_msg: String, already_reported: bool) -> Self {
+        Self {
+            error_msg,
+            already_reported,
+        }
+    }
+    pub fn print_error(&self) {
+        print_error(self.error_msg.as_str());
+    }
+}
+
+#[derive(Debug)]
 pub struct ChimeraCompileError {
     error_msg: String,
     line: usize,

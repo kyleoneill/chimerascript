@@ -763,6 +763,10 @@ impl Function {
         self.has_key("expected-failure")
     }
 
+    pub fn has_name(&self, name: &str) -> bool {
+        self.name.as_str() == name
+    }
+
     pub fn is_test_function(&self) -> bool {
         self.has_key("test")
     }
