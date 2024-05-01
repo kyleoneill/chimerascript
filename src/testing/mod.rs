@@ -116,7 +116,7 @@ mod testing {
     fn results_from_filename(filename: &str) -> Vec<TestResult> {
         initialize();
         let ast = read_cs_file(filename);
-        run_functions(ast,OsStr::new(filename))
+        run_functions(ast, OsStr::new(filename))
     }
 
     fn assert_test_pass(result: &TestResult, filename: &str, while_doing: &str) {

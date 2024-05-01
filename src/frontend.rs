@@ -1,4 +1,3 @@
-use std::ffi::OsStr;
 use crate::abstract_syntax_tree::{BlockContents, ChimeraScriptAST, Function, Statement};
 use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure};
 use crate::util::timer::Timer;
@@ -6,6 +5,7 @@ use crate::variable_map::VariableMap;
 use pest::iterators::Pairs;
 use pest::Parser;
 use pest_derive::Parser;
+use std::ffi::OsStr;
 use std::fmt::{Display, Formatter};
 use std::iter::Sum;
 
@@ -105,7 +105,7 @@ impl ResultCount {
     // This is used by a test
     #[allow(dead_code)]
     pub fn success_count(&self) -> usize {
-        return self.success
+        self.success
     }
 
     #[allow(dead_code)]
@@ -202,7 +202,13 @@ pub fn parse_main(input: &str) -> Result<Pairs<Rule>, ChimeraCompileError> {
 
 pub fn run_functions(ast: ChimeraScriptAST, filename: &OsStr) -> Vec<TestResult> {
     let mut results: Vec<TestResult> = Vec::new();
-    print_in_function(&format!("RUNNING FILE {}", filename.to_str().expect("Failed to convert OsStr to path")), 0);
+    print_in_function(
+        &format!(
+            "RUNNING FILE {}",
+            filename.to_str().expect("Failed to convert OsStr to path")
+        ),
+        0,
+    );
     for function in ast.functions {
         if function.is_test_function() {
             let mut function_variables = VariableMap::new();
@@ -212,9 +218,19 @@ pub fn run_functions(ast: ChimeraScriptAST, filename: &OsStr) -> Vec<TestResult>
     results
 }
 
-pub fn run_function_by_name(ast: ChimeraScriptAST, filename: &OsStr, function_name: &str) -> Vec<TestResult> {
+pub fn run_function_by_name(
+    ast: ChimeraScriptAST,
+    filename: &OsStr,
+    function_name: &str,
+) -> Vec<TestResult> {
     let mut results: Vec<TestResult> = Vec::new();
-    print_in_function(&format!("RUNNING FILE {}", filename.to_str().expect("Failed to convert OsStr to path")), 0);
+    print_in_function(
+        &format!(
+            "RUNNING FILE {}",
+            filename.to_str().expect("Failed to convert OsStr to path")
+        ),
+        0,
+    );
     for function in ast.functions {
         if function.is_test_function() && function.has_name(function_name) {
             let mut function_variables = VariableMap::new();
