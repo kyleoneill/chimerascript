@@ -27,7 +27,7 @@ Statement = { (AssignmentExpr | AssertCommand | PrintCommand | Expression ) ~ En
 AssignmentExpr = { "var" ~ VariableNameAssignment ~ "=" ~ Expression }
 
 // ASSERT STATEMENT
-AssertCommand = { "ASSERT" ~ Negation? ~ AssertSubCommand ~ Value ~ Value ~ QuoteString? }
+AssertCommand = { "ASSERT" ~ Negation? ~ AssertSubCommand ~ Value ~ Value ~ (QuoteString | FormattedString)? }
 Negation = { "NOT" }
 AssertSubCommand = { "EQUALS" | "GTE" | "GT" | "LTE" | "LT" | "STATUS" | "LENGTH" | "CONTAINS" }
 
@@ -35,7 +35,7 @@ AssertSubCommand = { "EQUALS" | "GTE" | "GT" | "LTE" | "LT" | "STATUS" | "LENGTH
 PrintCommand = { "PRINT" ~ Value }
 
 // EXPRESSION STATEMENT
-Expression = { HttpCommand | "LITERAL" ~ LiteralValue | "LIST" ~ ListExpression }
+Expression = { HttpCommand | "LITERAL" ~ LiteralValue | "LIST" ~ ListExpression | "FORMAT_STR" ~ FormattedString }
 
 // HTTP EXPRESSION
 // e.g. PUT /foo?field=5 name="hello" timeout=>60
@@ -60,36 +60,47 @@ ListCommand = { "LENGTH" | "APPEND" | "REMOVE" | "POP" }
 // LITERAL
 // TODO: Add support for JSON here, see TODO.md
 LiteralValue = { QuoteString | Number | Boolean | Null }
+// Strings
 // TODO: Will need to add variable support in here
-QuoteString = { "\"" ~ AggregatedString ~ "\"" }
+QuoteString = { "\"" ~ QuoteStringInner ~ "\"" }
+QuoteStringInner = { UserString }
+UserString = @{ Char+ }
+Char = {
+   !("\"" | "\\" | "(" | ")") ~ ANY
+   | WHITESPACE
+   | "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" | "(" | ")")
+   | "\\" ~ ("u" ~ ASCII_HEX_DIGIT{4})
+}
+// Numbers
 Number = { Float | SignedNumber | UnsignedNumber }
 Float = @{ "-"? ~ UnsignedNumber ~ "." ~ ASCII_DIGIT+ }
 SignedNumber = @{ "-" ~ ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* }
 UnsignedNumber = @{ "0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* }
+// Bool
 Boolean = { "true" | "True" | "false" | "False" }
+// Null
 Null = { ^"null" }
 
 // VARIABLES
 VariableValue = ${ "(" ~ NestedVariable+ ~ ")" }
+// TODO: This would allow for something like "foo....bar" which is not a defined variable. Need to
+//       allow for only a single `.` between words
 NestedVariable = { VariableLegalCharacters+ }
 VariableLegalCharacters = _{ Str | "." }
 
+// FORMATTED STRING
+// Need a $ here
+FormattedString = ${ "\"" ~ FormattedStringInner+ ~ "\"" }
+FormattedStringInner = { UserString | VariableValue }
 
 // GENERAL USE
 
-Value = ${ LiteralValue | VariableValue }
+// TODO: Value is a really bad name. Might want to change this to something like 'Term'
+//       'Value' is meant to represent data that is either a LITERAL or something that must be resolved,
+//       like a variable
+Value = ${ LiteralValue | FormattedString | VariableValue }
 
 VariableNameAssignment = { Str+ }
-
-AggregatedString = { StrWithWhitespace+ }
-WhiteSpace = @{ " " }
-// TODO: Need to support a lot more chars here. String must be able to contain special chars like
-//       !?@#$%^&*()[].,"'<>/  and will probably need escape support. Ex, the string
-//       "foo bar bash \(asdf\)" has escaped the () so we do not try to parse `asdf` as a variable
-// IMPORTANT: When adding this, those additional chars should not be allowed for some uses (like variable names).
-//  rather than replacing Str, add a new rule to StrWithWhitespace and maybe change its name to reflect that it should
-//  be used to represent a user String
-StrWithWhitespace = _{ Str | WhiteSpace }
 
 VariableOrStr = { VariableValue | StrPlus }
 StrPlus = { Str+ }

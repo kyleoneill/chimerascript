@@ -97,6 +97,15 @@ pub fn expression_command(
                     }
                 }
             }
+        },
+        Expression::FormattedString(formatted_string) => {
+            let mut built_str = String::new();
+            for value in formatted_string {
+                let resolved = value.resolve(context, variable_map)?;
+                let var_name = value.get_variable_name()?.to_string();
+                built_str.push_str(resolved.borrow(context)?.try_into_string(var_name, context)?);
+            }
+            Ok(Data::from_literal(Literal::String(built_str)))
         }
     }
 }
