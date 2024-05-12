@@ -761,8 +761,6 @@ impl ChimeraScriptAST {
             let inner_value = formatted_string_inner
                 .next()
                 .expect("A Rule::FormattedStringInner must contain an inner value");
-            println!("{:?}", inner_value.as_str());
-            println!("{:?}", inner_value.as_span().as_str());
             match inner_value.as_rule() {
                 Rule::UserString => values.push(Value::Literal(Literal::String(
                     inner_value.as_str().to_string(),
