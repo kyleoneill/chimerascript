@@ -184,7 +184,7 @@ mod testing {
         }
     }
 
-    // TODO: Add tests here for a test-case functions, decorators, teardown, nested functions
+    // TODO: Add tests here for a test-case functions, decorators, teardown
     // TODO: Add tests for statements being broken up into multiple lines
 
     // These tests use assert!() to assert that a boolean field is true but assert_eq!() to assert that a boolean
@@ -246,6 +246,24 @@ mod testing {
             &res[1],
             filename,
             "when using literals as variables and running assertions against them",
+        );
+    }
+
+    #[test]
+    /// Test formatted strings and strings with special characters
+    fn user_strings() {
+        let filename = "strings.chs";
+        let res = results_from_filename(filename);
+        assert_eq!(
+            res.len(),
+            2,
+            "Expected to get 2 test results when running a chs file with 2 test cases"
+        );
+        assert_test_pass(&res[0], filename, "when using formatted strings");
+        assert_test_pass(
+            &res[1],
+            filename,
+            "when using special characters in a string",
         );
     }
 
