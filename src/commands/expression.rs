@@ -1,4 +1,6 @@
-use crate::abstract_syntax_tree::{Expression, ListCommandOperations, ListExpression, MutateListOperations, Value};
+use crate::abstract_syntax_tree::{
+    Expression, ListCommandOperations, ListExpression, MutateListOperations, Value,
+};
 use crate::err_handle::{ChimeraRuntimeFailure, VarTypes};
 use crate::frontend::Context;
 use crate::literal::{Collection, Data, DataKind, Literal, NumberKind};
@@ -95,25 +97,30 @@ pub fn expression_command(
                     }
                 }
             }
-        },
+        }
         Expression::FormattedString(formatted_string) => {
             let mut built_str = String::new();
             for value in formatted_string {
                 match value {
-                    Value::Literal(literal_val) => {
-                        match literal_val.to_str() {
-                            Some(as_str) => built_str.push_str(as_str),
-                            None => return Err(ChimeraRuntimeFailure::InternalError("converting a literal value into a string".to_owned()))
+                    Value::Literal(literal_val) => match literal_val.to_str() {
+                        Some(as_str) => built_str.push_str(as_str),
+                        None => {
+                            return Err(ChimeraRuntimeFailure::InternalError(
+                                "converting a literal value into a string".to_owned(),
+                            ))
                         }
                     },
                     Value::Variable(ref _var_name) => {
                         let resolved = value.resolve(context, variable_map)?;
                         let binding = resolved.borrow(context)?;
                         built_str.push_str(binding.to_string().as_str());
-                    },
-                    Value::FormattedString(_) => return Err(ChimeraRuntimeFailure::InternalError("resolving a recursive formatted string".to_owned()))
+                    }
+                    Value::FormattedString(_) => {
+                        return Err(ChimeraRuntimeFailure::InternalError(
+                            "resolving a recursive formatted string".to_owned(),
+                        ))
+                    }
                 }
-
             }
             Ok(Data::from_literal(Literal::String(built_str)))
         }

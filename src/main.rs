@@ -64,12 +64,15 @@ fn walk_directory(path: &Path) -> Result<ResultCount, CLIError> {
     }
 
     // Here flatten() is flattening read_dir()'s iterator, removing the non-Ok values
-    for entry in path.read_dir().expect("Failed to read directory contents").flatten() {
+    for entry in path
+        .read_dir()
+        .expect("Failed to read directory contents")
+        .flatten()
+    {
         let entry_path = entry.path();
         if entry_path.is_file() {
             // Check if the file has a .chs extension, ignore it if it doesn't
-            if entry_path.extension().is_none()
-                || entry_path.extension().unwrap() != FILE_EXTENSION
+            if entry_path.extension().is_none() || entry_path.extension().unwrap() != FILE_EXTENSION
             {
                 continue;
             }

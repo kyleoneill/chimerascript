@@ -259,15 +259,11 @@ mod testing {
             2,
             "Expected to get 2 test results when running a chs file with 2 test cases"
         );
-        assert_test_pass(
-            &res[0],
-            filename,
-            "when using formatted strings",
-        );
+        assert_test_pass(&res[0], filename, "when using formatted strings");
         assert_test_pass(
             &res[1],
             filename,
-            "when using special characters in a string"
+            "when using special characters in a string",
         );
     }
 

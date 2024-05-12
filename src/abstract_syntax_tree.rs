@@ -147,9 +147,9 @@ impl ChimeraScriptAST {
             .expect("A Rule::Statement inner must always have one inner pair");
         // TODO: Break these up into their own individual "pair_to_x" functions. Clean up how they're written
         match statement_inner.as_rule() {
-            Rule::AssertCommand => Ok(Statement::AssertCommand(
-                Self::parse_rule_to_assertion(statement_inner)?
-            )),
+            Rule::AssertCommand => Ok(Statement::AssertCommand(Self::parse_rule_to_assertion(
+                statement_inner,
+            )?)),
             Rule::AssignmentExpr => {
                 // An AssignmentExpr is going to contain
                 // 1. A string representing a variable name
@@ -215,9 +215,7 @@ impl ChimeraScriptAST {
         // Peek ahead to see if our inner contains an optional Negation
         let negate_assertion = match pairs.peek() {
             Some(next) => next.as_rule() == Rule::Negation,
-            None => panic!(
-                "Expected a Rule::AssertCommand to contain inner pairs but it did not"
-            ),
+            None => panic!("Expected a Rule::AssertCommand to contain inner pairs but it did not"),
         };
 
         // peek() does not move the iterator position, so if we did have a negation then we
@@ -270,18 +268,20 @@ impl ChimeraScriptAST {
             Some(next) => {
                 match next.as_rule() {
                     // HERE NOW
-                    Rule::QuoteString => {
-                        Some(Value::Literal(Literal::String(Self::parse_quotestring_rule(next)?)))
-                    },
-                    Rule::FormattedString => {
-                        Some(Value::FormattedString(Self::parse_rule_to_formatted_string(next)?))
-                    },
-                    _ => return Err(ChimeraCompileError::new(
-                        "Got an invalid rule inside an AssertCommand's error message",
-                        next.line_col()
-                    ))
+                    Rule::QuoteString => Some(Value::Literal(Literal::String(
+                        Self::parse_quotestring_rule(next)?,
+                    ))),
+                    Rule::FormattedString => Some(Value::FormattedString(
+                        Self::parse_rule_to_formatted_string(next)?,
+                    )),
+                    _ => {
+                        return Err(ChimeraCompileError::new(
+                            "Got an invalid rule inside an AssertCommand's error message",
+                            next.line_col(),
+                        ))
+                    }
                 }
-            },
+            }
             None => None,
         };
 
@@ -649,9 +649,9 @@ impl ChimeraScriptAST {
             .next()
             .ok_or_else(|| no_pairs_panic("Expression"))?;
         match first_token.as_rule() {
-            Rule::LiteralValue => Ok(Expression::Literal(
-                Self::parse_rule_to_literal_value(first_token)?,
-            )),
+            Rule::LiteralValue => Ok(Expression::Literal(Self::parse_rule_to_literal_value(
+                first_token,
+            )?)),
             Rule::HttpCommand => Self::parse_rule_to_http_command(first_token),
             Rule::ListExpression => {
                 let mut list_paris = first_token.into_inner();
@@ -693,8 +693,7 @@ impl ChimeraScriptAST {
                         let variable_name_token = list_command_expr_tokens
                             .next()
                             .ok_or_else(|| no_pairs_panic("ListCommandExpr variable name"))?;
-                        let list_name =
-                            Self::parse_rule_to_variable_name(variable_name_token)?;
+                        let list_name = Self::parse_rule_to_variable_name(variable_name_token)?;
                         let operation = match list_command_expr_tokens.next() {
                             Some(value_token) => {
                                 let value = Self::parse_rule_to_value(value_token)?;
@@ -738,9 +737,9 @@ impl ChimeraScriptAST {
                         list_expression_kind_token.line_col(),
                     )),
                 }
-            },
+            }
             Rule::FormattedString => Ok(Expression::FormattedString(
-                Self::parse_rule_to_formatted_string(first_token)?
+                Self::parse_rule_to_formatted_string(first_token)?,
             )),
             _ => Err(ChimeraCompileError::new(
                 "Did not get a valid expression",
@@ -760,19 +759,25 @@ impl ChimeraScriptAST {
         let inner = pair.into_inner();
         for pair in inner {
             let mut formatted_string_inner = pair.into_inner();
-            let inner_value = formatted_string_inner.next().expect("A Rule::FormattedStringInner must contain an inner value");
+            let inner_value = formatted_string_inner
+                .next()
+                .expect("A Rule::FormattedStringInner must contain an inner value");
             println!("{:?}", inner_value.as_str());
             println!("{:?}", inner_value.as_span().as_str());
             match inner_value.as_rule() {
-                Rule::UserString => values.push(Value::Literal(Literal::String(inner_value.as_str().to_string()))),
+                Rule::UserString => values.push(Value::Literal(Literal::String(
+                    inner_value.as_str().to_string(),
+                ))),
                 Rule::VariableValue => {
                     let var_name = Self::parse_rule_to_variable_name(inner_value)?;
                     values.push(Value::Variable(var_name));
-                },
-                _ => return Err(ChimeraCompileError::new(
-                    "Did not get a valid rule while iterating FormattedString inner",
-                    inner_value.line_col(),
-                )),
+                }
+                _ => {
+                    return Err(ChimeraCompileError::new(
+                        "Did not get a valid rule while iterating FormattedString inner",
+                        inner_value.line_col(),
+                    ))
+                }
             }
         }
         Ok(values)
@@ -876,7 +881,7 @@ impl From<Statement> for AssertCommand {
 pub enum Value {
     Literal(Literal),
     Variable(String),
-    FormattedString(Vec<Value>)
+    FormattedString(Vec<Value>),
 }
 
 impl std::str::FromStr for Value {
@@ -891,7 +896,7 @@ impl std::fmt::Display for Value {
         match self {
             Value::Literal(literal) => write!(f, "{}", literal),
             Value::Variable(var_name) => write!(f, "{}", var_name),
-            Value::FormattedString(formatted_string) => write!(f, "{:?}", formatted_string)
+            Value::FormattedString(formatted_string) => write!(f, "{:?}", formatted_string),
         }
     }
 }
@@ -901,7 +906,7 @@ impl Value {
         match self {
             Value::Literal(literal) => format!("value {}", literal),
             Value::Variable(var_name) => format!("var '{}'", var_name.to_owned()),
-            Value::FormattedString(formatted_string) => format!("fmt_str '{:?}'", formatted_string)
+            Value::FormattedString(formatted_string) => format!("fmt_str '{:?}'", formatted_string),
         }
     }
 
@@ -912,7 +917,9 @@ impl Value {
     ) -> Result<Data, ChimeraRuntimeFailure> {
         match self {
             Value::Literal(val) => Ok(Data::from_literal(val.clone())),
-            Value::Variable(var_name) => Ok(Self::get_from_var_map(context, var_name, variable_map)?),
+            Value::Variable(var_name) => {
+                Ok(Self::get_from_var_map(context, var_name, variable_map)?)
+            }
             Value::FormattedString(formatted_string) => {
                 let mut built_str: String = String::new();
                 for value in formatted_string {
@@ -932,7 +939,11 @@ impl Value {
         }
     }
 
-    fn get_from_var_map(context: &Context, var_name: &String, variable_map: &VariableMap) -> Result<Data, ChimeraRuntimeFailure> {
+    fn get_from_var_map(
+        context: &Context,
+        var_name: &str,
+        variable_map: &VariableMap,
+    ) -> Result<Data, ChimeraRuntimeFailure> {
         let accessors: Vec<&str> = var_name.split('.').collect();
         let value = variable_map.get(context, accessors[0])?;
         if accessors.len() == 1 {
@@ -1297,30 +1308,32 @@ mod ast_tests {
 
     #[test]
     /// Test a FORMAT_STR expression
-    fn formatted_string_expression()  {
-        match str_to_statement("FORMAT_STR \"this is a (formatted) string with some (variable_names)\";") {
-            Statement::Expression(expression) => {
-                match expression {
-                    Expression::FormattedString(formatted_string) => {
-                        assert_eq!(
+    fn formatted_string_expression() {
+        match str_to_statement(
+            "FORMAT_STR \"this is a (formatted) string with some (variable_names)\";",
+        ) {
+            Statement::Expression(expression) => match expression {
+                Expression::FormattedString(formatted_string) => {
+                    assert_eq!(
                             formatted_string.len(),
                             4,
                             "FormattedString should have a length of 4 when written in the format of 'string -> var -> string -> var'"
                         );
-                        assert_eq!(
-                            formatted_string,
-                            vec![
-                                Value::Literal(Literal::String("this is a ".to_owned())),
-                                Value::Variable("formatted".to_owned()),
-                                Value::Literal(Literal::String(" string with some ".to_owned())),
-                                Value::Variable("variable_names".to_owned())
-                            ]
-                        );
-                    },
-                    _ => panic!("A FORMAT_STR statement was not resolved into an Expression::FormattedString")
+                    assert_eq!(
+                        formatted_string,
+                        vec![
+                            Value::Literal(Literal::String("this is a ".to_owned())),
+                            Value::Variable("formatted".to_owned()),
+                            Value::Literal(Literal::String(" string with some ".to_owned())),
+                            Value::Variable("variable_names".to_owned())
+                        ]
+                    );
                 }
+                _ => panic!(
+                    "A FORMAT_STR statement was not resolved into an Expression::FormattedString"
+                ),
             },
-            _ => panic!("A FORMAT_STR statement was not resolved into a Statement::Expression")
+            _ => panic!("A FORMAT_STR statement was not resolved into a Statement::Expression"),
         }
     }
 

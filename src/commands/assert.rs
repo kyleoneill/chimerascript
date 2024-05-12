@@ -77,7 +77,7 @@ pub fn assert_command(
         Value::Literal(literal_val) => format!("value {}", literal_val),
         Value::Variable(var_name) => {
             format!("var '{}' with value '{}'", var_name, left_data.deref())
-        },
+        }
         Value::FormattedString(formatted_string) => {
             format!("formatted string with value '{:?}'", formatted_string)
         }
