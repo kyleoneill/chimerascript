@@ -361,6 +361,10 @@ impl DataKind {
             ChimeraRuntimeFailure::VarWrongType(came_from, VarTypes::List, context.current_line)
         })
     }
+
+    // TODO: This function name is awful and keeps causing me pain because I keep calling it
+    //       thinking it converts any Literal to a String, but it does not. It just returns
+    //       if our Literal is a Literal::String. Change it asap
     pub fn try_into_string(
         &self,
         came_from: String,

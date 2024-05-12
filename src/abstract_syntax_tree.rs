@@ -941,13 +941,6 @@ impl Value {
             Ok(value.resolve_access(accessors, context)?)
         }
     }
-
-    pub fn get_variable_name(&self) -> Result<&str, ChimeraRuntimeFailure> {
-        match self {
-            Self::Variable(var_name) => Ok(var_name.as_str()),
-            _ => Err(ChimeraRuntimeFailure::InternalError("getting the name of a variable".to_owned()))
-        }
-    }
 }
 
 #[derive(Debug, PartialEq)]
