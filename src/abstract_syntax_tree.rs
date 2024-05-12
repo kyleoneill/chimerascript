@@ -267,7 +267,6 @@ impl ChimeraScriptAST {
         let error_message = match pairs.peek() {
             Some(next) => {
                 match next.as_rule() {
-                    // HERE NOW
                     Rule::QuoteString => Some(Value::Literal(Literal::String(
                         Self::parse_quotestring_rule(next)?,
                     ))),
