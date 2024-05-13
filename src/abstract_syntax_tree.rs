@@ -265,22 +265,20 @@ impl ChimeraScriptAST {
 
         // Check for an optional error message, can be a literal quotestring or a formatted string
         let error_message = match pairs.peek() {
-            Some(next) => {
-                match next.as_rule() {
-                    Rule::QuoteString => Some(Value::Literal(Literal::String(
-                        Self::parse_quotestring_rule(next)?,
-                    ))),
-                    Rule::FormattedString => Some(Value::FormattedString(
-                        Self::parse_rule_to_formatted_string(next)?,
-                    )),
-                    _ => {
-                        return Err(ChimeraCompileError::new(
-                            "Got an invalid rule inside an AssertCommand's error message",
-                            next.line_col(),
-                        ))
-                    }
+            Some(next) => match next.as_rule() {
+                Rule::QuoteString => Some(Value::Literal(Literal::String(
+                    Self::parse_quotestring_rule(next)?,
+                ))),
+                Rule::FormattedString => Some(Value::FormattedString(
+                    Self::parse_rule_to_formatted_string(next)?,
+                )),
+                _ => {
+                    return Err(ChimeraCompileError::new(
+                        "Got an invalid rule inside an AssertCommand's error message",
+                        next.line_col(),
+                    ))
                 }
-            }
+            },
             None => None,
         };
 
@@ -982,7 +980,7 @@ impl std::fmt::Display for AssertSubCommand {
 #[derive(Debug)]
 pub struct HttpCommand {
     pub verb: HTTPVerb,
-    path: Vec<Value>,
+    pub path: Vec<Value>,
     pub query_params: Vec<HttpAssignment>,
     pub http_assignments: Vec<HttpAssignment>,
     pub headers: Vec<HttpAssignment>,

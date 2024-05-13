@@ -14,12 +14,6 @@ case put_request() {
   var res = PUT /test_resource name="new_name";
   ASSERT STATUS (res) 200;
   ASSERT EQUALS (res.body.name) "new_name";
-
-  case variable_in_endpoint() {
-    var partial_request_name = LITERAL "resource";
-    var response = PUT /test_(partial_request_name)?foo="bar"&baz="bash" name="new_name";
-    ASSERT STATUS (response) 200;
-  }
 }
 
 [test]
@@ -79,4 +73,13 @@ case headers() {
     ASSERT STATUS (header_with_var) 200;
     ASSERT CONTAINS (header_with_var.body) "foo";
     ASSERT EQUALS (header_with_var.body.foo) 5;
+}
+
+[test]
+case path_variables() {
+    var some_var = LITERAL "test";
+    var id = LITERAL 50;
+    var res = GET /endpoint_(some_var)/(id);
+    ASSERT CONTAINS (res.body) "path";
+    ASSERT EQUALS (res.body.path) "http://127.0.0.1:5000/endpoint_test/50";
 }

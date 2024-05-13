@@ -69,17 +69,32 @@ mod testing {
             }
 
             // Construct a response struct out of the request params
-            let body: DataKind =
-                if resolved_body.is_empty() && query_params.is_empty() && headers.is_empty() {
-                    DataKind::Literal(Literal::Null)
-                } else {
-                    let mut body_map: HashMap<String, Data> = HashMap::new();
-                    body_map.extend(query_params);
-                    body_map.extend(resolved_body);
-                    body_map.extend(headers);
-                    DataKind::Collection(Collection::Object(body_map))
-                };
-            response_obj.insert("body".to_owned(), Data::new(body));
+            let mut body_data: HashMap<String, Data> = HashMap::new();
+            let resolved_path = http_command.resolve_path(context, variable_map)?;
+            body_data.insert(
+                "path".to_owned(),
+                Data::new(DataKind::Literal(Literal::String(resolved_path))),
+            );
+            if !resolved_body.is_empty() || !query_params.is_empty() || !headers.is_empty() {
+                body_data.extend(query_params);
+                body_data.extend(resolved_body);
+                body_data.extend(headers);
+            }
+
+            // let body: DataKind =
+            //     if resolved_body.is_empty() && query_params.is_empty() && headers.is_empty() {
+            //         DataKind::Literal(Literal::Null)
+            //     } else {
+            //         let mut body_map: HashMap<String, Data> = HashMap::new();
+            //         body_map.extend(query_params);
+            //         body_map.extend(resolved_body);
+            //         body_map.extend(headers);
+            //         DataKind::Collection(Collection::Object(body_map))
+            //     };
+            response_obj.insert(
+                "body".to_owned(),
+                Data::new(DataKind::Collection(Collection::Object(body_data))),
+            );
             Ok(DataKind::Collection(Collection::Object(response_obj)))
         }
     }
@@ -107,10 +122,8 @@ mod testing {
         let full_filename = format!("./src/testing/chs_files/{}", filename);
         let file_contents = fs::read_to_string(Path::new(&full_filename))
             .expect("Failed to read chs file when setting up test");
-        match ChimeraScriptAST::new(file_contents.as_str()) {
-            Ok(ast) => ast,
-            Err(_) => panic!("Failed to parse a file into an AST"),
-        }
+        ChimeraScriptAST::new(file_contents.as_str())
+            .unwrap_or_else(|_e| panic!("Failed to parse a file into an AST"))
     }
 
     fn results_from_filename(filename: &str) -> Vec<TestResult> {
@@ -382,7 +395,7 @@ mod testing {
     fn web_requests() {
         let filename = "web_request.chs";
         let res = results_from_filename(filename);
-        assert_eq!(res.len(), 7);
+        assert_eq!(res.len(), 8);
 
         // Test GET
         assert_test_pass(&res[0], filename, "to confirm basic usage of a GET request");
@@ -395,12 +408,6 @@ mod testing {
 
         // Test PUT
         assert_test_pass(&res[1], filename, "to confirm basic usage of a PUT request");
-        assert_subtest_length(&res[1], 1, filename);
-        assert_test_pass(
-            &res[1].subtest_results[0],
-            filename,
-            "to use a variable in an endpoint path",
-        );
 
         // Test DELETE
         assert_test_pass(
@@ -441,6 +448,13 @@ mod testing {
             &res[6],
             filename,
             "to confirm basic usage of headers in a request",
+        );
+
+        // Test variables in web request paths
+        assert_test_pass(
+            &res[7],
+            filename,
+            "to confirm the ability to include variables in a request path",
         );
     }
 
