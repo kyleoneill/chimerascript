@@ -80,17 +80,7 @@ mod testing {
                 body_data.extend(resolved_body);
                 body_data.extend(headers);
             }
-
-            // let body: DataKind =
-            //     if resolved_body.is_empty() && query_params.is_empty() && headers.is_empty() {
-            //         DataKind::Literal(Literal::Null)
-            //     } else {
-            //         let mut body_map: HashMap<String, Data> = HashMap::new();
-            //         body_map.extend(query_params);
-            //         body_map.extend(resolved_body);
-            //         body_map.extend(headers);
-            //         DataKind::Collection(Collection::Object(body_map))
-            //     };
+            
             response_obj.insert(
                 "body".to_owned(),
                 Data::new(DataKind::Collection(Collection::Object(body_data))),
