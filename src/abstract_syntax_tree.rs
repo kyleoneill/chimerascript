@@ -899,7 +899,7 @@ impl std::fmt::Display for Value {
 impl Value {
     pub fn error_print(&self) -> String {
         match self {
-            Value::Literal(literal) => format!("value {}", literal),
+            Value::Literal(literal) => format!("value '{}'", literal),
             Value::Variable(var_name) => format!("var '{}'", var_name.to_owned()),
             Value::FormattedString(formatted_string) => format!("fmt_str '{:?}'", formatted_string),
         }

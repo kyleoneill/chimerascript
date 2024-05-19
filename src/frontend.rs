@@ -7,6 +7,7 @@ use pest::Parser;
 use pest_derive::Parser;
 use std::ffi::OsStr;
 use std::fmt::{Display, Formatter};
+use std::io::Write;
 use std::iter::Sum;
 
 pub struct Context {
@@ -90,8 +91,9 @@ impl ResultCount {
             "FAILED"
         }
     }
-    pub fn print_with_time(&self, time_taken: &str) {
-        println!(
+    pub fn print_with_time<W: Write>(&self, writer: &mut W, time_taken: &str) {
+        writeln!(
+            writer,
             "Ran {} tests in {} with {} successes, {} failures, and {} errors\n\n{}",
             self.total_tests,
             time_taken,
@@ -100,6 +102,7 @@ impl ResultCount {
             self.error,
             self.overall_result()
         )
+        .expect("Failed to write during a print");
     }
 
     // This is used by a test
@@ -200,9 +203,15 @@ pub fn parse_main(input: &str) -> Result<Pairs<Rule>, ChimeraCompileError> {
     }
 }
 
-pub fn run_functions(ast: ChimeraScriptAST, filename: &OsStr) -> Vec<TestResult> {
+pub fn run_functions<S: Write, E: Write>(
+    writer: &mut S,
+    err_writer: &mut E,
+    ast: ChimeraScriptAST,
+    filename: &OsStr,
+) -> Vec<TestResult> {
     let mut results: Vec<TestResult> = Vec::new();
     print_in_function(
+        writer,
         &format!(
             "RUNNING FILE {}",
             filename.to_str().expect("Failed to convert OsStr to path")
@@ -212,19 +221,28 @@ pub fn run_functions(ast: ChimeraScriptAST, filename: &OsStr) -> Vec<TestResult>
     for function in ast.functions {
         if function.is_test_function() {
             let mut function_variables = VariableMap::new();
-            results.push(run_test_function(function, &mut function_variables, 1));
+            results.push(run_test_function(
+                writer,
+                err_writer,
+                function,
+                &mut function_variables,
+                1,
+            ));
         }
     }
     results
 }
 
-pub fn run_function_by_name(
+pub fn run_function_by_name<S: Write, E: Write>(
+    writer: &mut S,
+    err_writer: &mut E,
     ast: ChimeraScriptAST,
     filename: &OsStr,
     function_name: &str,
 ) -> Vec<TestResult> {
     let mut results: Vec<TestResult> = Vec::new();
     print_in_function(
+        writer,
         &format!(
             "RUNNING FILE {}",
             filename.to_str().expect("Failed to convert OsStr to path")
@@ -234,27 +252,36 @@ pub fn run_function_by_name(
     for function in ast.functions {
         if function.is_test_function() && function.has_name(function_name) {
             let mut function_variables = VariableMap::new();
-            results.push(run_test_function(function, &mut function_variables, 1));
+            results.push(run_test_function(
+                writer,
+                err_writer,
+                function,
+                &mut function_variables,
+                1,
+            ));
         }
     }
     results
 }
 
-pub fn print_in_function(thing: &impl Display, depth: usize) {
+pub fn print_in_function<W: Write>(writer: &mut W, thing: &impl Display, depth: usize) {
     // This formats an empty string to be padded rightwards by `depth`
     // Cannot directly add padding to `thing` because padding is conditionally added to things shorter than the
     // padding amount, so an empty string is used instead to act as padding
-    println!("{:indent$}{}", "", thing, indent = depth);
+    writeln!(writer, "{:indent$}{}", "", thing, indent = depth)
+        .expect("Failed to write during a print")
 }
 
 // TODO: Should variable scoping be added? How will this impact the teardown stack (if teardown is added by called non-
 //       test functions)?
-pub fn run_test_function(
+pub fn run_test_function<S: Write, E: Write>(
+    writer: &mut S,
+    err_writer: &mut E,
     function: Function,
     variable_map: &mut VariableMap,
     depth: usize,
 ) -> TestResult {
-    print_in_function(&format!("STARTING TEST - {}", function.name), depth);
+    print_in_function(writer, &format!("STARTING TEST - {}", function.name), depth);
     let timer = Timer::new();
     let mut context = Context::new();
     // TODO: If the ability to call functions is added (like calling an init function) the teardown stack needs to be
@@ -262,7 +289,7 @@ pub fn run_test_function(
     //       to call non-test functions with no parents?
     let mut teardown_stack: Vec<Statement> = Vec::new();
 
-    // Get these two variables here as they are needed at the end and the for..in.. is about to consume function
+    // Copy these two variables here as they are needed at the end of the function and the for..in.. is about to consume function
     let is_expected_failure = function.is_expected_failure();
     let function_name = function.name;
 
@@ -271,9 +298,13 @@ pub fn run_test_function(
 
     for block_contents in function.block {
         match block_contents {
-            BlockContents::Function(nested_function) => {
-                subtest_results.push(run_test_function(nested_function, variable_map, depth + 1))
-            }
+            BlockContents::Function(nested_function) => subtest_results.push(run_test_function(
+                writer,
+                err_writer,
+                nested_function,
+                variable_map,
+                depth + 1,
+            )),
             BlockContents::Teardown(mut teardown_block) => {
                 // TODO: Swap any Value::Variable uses in each statement for a Value::Literal to "stabilize" the
                 //       teardown statement against any variable changes during the test
@@ -301,6 +332,7 @@ pub fn run_test_function(
                     }
                     Statement::PrintCommand(print_cmd) => crate::commands::print::print_command(
                         &context,
+                        writer,
                         print_cmd,
                         variable_map,
                         depth,
@@ -320,7 +352,7 @@ pub fn run_test_function(
                 match statement_result {
                     Ok(_) => (),
                     Err(runtime_error) => {
-                        runtime_error.print_error(depth);
+                        runtime_error.print_error(err_writer, depth);
                         runtime_failure = Some(runtime_error);
                         break;
                     }
@@ -347,6 +379,7 @@ pub fn run_test_function(
     };
     let time_to_run = timer.finish();
     print_in_function(
+        writer,
         &format!(
             "FINISHED TEST - {} - {} - {}",
             function_name.as_str(),
