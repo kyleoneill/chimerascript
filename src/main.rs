@@ -161,6 +161,7 @@ fn main() {
     let config = match Config::from_path_str(&args.config) {
         Ok(config) => config,
         Err(err_msg) => {
+            // TODO: See below todo but I should not be using direct handles to stdout or stderr
             print_error(&mut stderr(), &err_msg);
             return;
         }
