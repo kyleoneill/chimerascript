@@ -7,7 +7,6 @@
   other than just the one specified in config
 - Support for running a test by name
   - Accessed with args.name in main.rs
-- Test tagging?
 - Script documentation
 - Add JSON support
   - Ex, `var foo = LITERAL JSON {"test":5};`

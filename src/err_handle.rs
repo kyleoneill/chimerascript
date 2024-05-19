@@ -1,4 +1,5 @@
 use std::fmt::{Display, Formatter};
+use std::io::Write;
 
 #[derive(Debug)]
 pub struct CLIError {
@@ -15,8 +16,8 @@ impl CLIError {
             already_reported,
         }
     }
-    pub fn print_error(&self) {
-        print_error(self.error_msg.as_str());
+    pub fn print_error<W: Write>(&self, writer: &mut W) {
+        print_error(writer, self.error_msg.as_str());
     }
 }
 
@@ -36,11 +37,13 @@ impl ChimeraCompileError {
         }
     }
 
-    pub fn print_error(&self) {
-        eprintln!(
+    pub fn print_error<W: Write>(&self, writer: &mut W) {
+        writeln!(
+            writer,
             "Failed to compile ChimeraScript with error '{}' on line {} column {}",
             self.error_msg, self.line, self.column
-        );
+        )
+        .expect("Failed to write an error");
     }
 }
 
@@ -99,7 +102,7 @@ impl Display for ChimeraRuntimeFailure {
             ),
             ChimeraRuntimeFailure::VarWrongType(var_name, expected_type, line) => write!(
                 f,
-                "ERROR on line {}: '{}' was expected to be of type {} but it was not",
+                "ERROR on line {}: {} was expected to be of type {} but it was not",
                 line, var_name, expected_type
             ),
             ChimeraRuntimeFailure::InternalError(action) => {
@@ -186,8 +189,9 @@ impl PartialEq for ChimeraRuntimeFailure {
 }
 
 impl ChimeraRuntimeFailure {
-    pub fn print_error(&self, padding: usize) {
-        eprintln!("{:indent$}{}", "", self, indent = padding + 1);
+    pub fn print_error<W: Write>(&self, writer: &mut W, padding: usize) {
+        writeln!(writer, "{:indent$}{}", "", self, indent = padding + 1)
+            .expect("Failed to write an error");
     }
 
     #[allow(dead_code)] // Used by tests
@@ -207,6 +211,6 @@ impl ChimeraRuntimeFailure {
     }
 }
 
-pub fn print_error(err_msg: &str) {
-    eprintln!("ERROR: {}", err_msg);
+pub fn print_error<W: Write>(writer: &mut W, err_msg: &str) {
+    writeln!(writer, "ERROR: {}", err_msg).expect("Failed to write an error");
 }

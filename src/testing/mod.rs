@@ -1,93 +1,16 @@
+pub(crate) mod util;
+
 #[cfg(test)]
 mod testing {
-    use crate::abstract_syntax_tree::{ChimeraScriptAST, HTTPVerb, HttpCommand};
+    use crate::abstract_syntax_tree::ChimeraScriptAST;
     use crate::err_handle::{ChimeraRuntimeFailure, VarTypes};
-    use crate::frontend::{run_functions, Context, TestResult};
-    use crate::literal::{Collection, Data, DataKind, Literal, NumberKind};
-    use crate::util::client::WebClient;
-    use crate::variable_map::VariableMap;
+    use crate::frontend::{run_functions, TestResult};
+    use crate::testing::util::{fake_client::FakeClient, test_writer::TestWriter};
     use crate::CLIENT;
-    use std::collections::HashMap;
     use std::ffi::OsStr;
     use std::fs;
     use std::path::Path;
     use std::sync::{Once, OnceLock};
-
-    #[derive(Debug)]
-    struct FakeClient {
-        domain: String,
-    }
-
-    impl FakeClient {
-        pub fn new(s: &str) -> Self {
-            let domain = s.to_owned();
-            Self { domain }
-        }
-    }
-
-    impl WebClient for FakeClient {
-        fn get_domain(&self) -> &str {
-            self.domain.as_str()
-        }
-        fn make_request(
-            &self,
-            context: &Context,
-            http_command: HttpCommand,
-            variable_map: &VariableMap,
-        ) -> Result<DataKind, ChimeraRuntimeFailure> {
-            let mut response_obj: HashMap<String, Data> = HashMap::new();
-            response_obj.insert(
-                "status_code".to_owned(),
-                Data::from_literal(Literal::Number(NumberKind::U64(match http_command.verb {
-                    HTTPVerb::Get => 200,
-                    HTTPVerb::Delete => 200,
-                    HTTPVerb::Post => 201,
-                    HTTPVerb::Put => 200,
-                }))),
-            );
-
-            // Take a request and extract the query and body params from it
-            let mut resolved_body: HashMap<String, Data> = HashMap::new();
-            for assignment in &http_command.http_assignments {
-                let key = assignment.lhs.clone();
-                let value = assignment.rhs.resolve(context, variable_map)?;
-                resolved_body.insert(key, value);
-            }
-            let mut query_params: HashMap<String, Data> = HashMap::new();
-            for query_param in &http_command.query_params {
-                let key = query_param.lhs.clone();
-                let value = query_param.rhs.resolve(context, variable_map)?;
-                query_params.insert(key, value);
-            }
-            let raw_headers = &http_command.resolve_header(context, variable_map)?;
-            let mut headers: HashMap<String, Data> = HashMap::new();
-            for (key, value) in raw_headers.iter() {
-                let deserializable_value = format!("\"{}\"", value.to_str().unwrap());
-                let data =
-                    Data::new(serde_json::from_slice(deserializable_value.as_bytes()).unwrap());
-                headers.insert(key.to_string(), data);
-            }
-
-            // Construct a response struct out of the request params
-            let mut body_data: HashMap<String, Data> = HashMap::new();
-            let resolved_path = http_command.resolve_path(context, variable_map)?;
-            body_data.insert(
-                "path".to_owned(),
-                Data::new(DataKind::Literal(Literal::String(resolved_path))),
-            );
-            if !resolved_body.is_empty() || !query_params.is_empty() || !headers.is_empty() {
-                body_data.extend(query_params);
-                body_data.extend(resolved_body);
-                body_data.extend(headers);
-            }
-            
-            response_obj.insert(
-                "body".to_owned(),
-                Data::new(DataKind::Collection(Collection::Object(body_data))),
-            );
-            Ok(DataKind::Collection(Collection::Object(response_obj)))
-        }
-    }
 
     static INIT: Once = Once::new();
     // turn this into a oncelock, the init will set if it hasn't been set yet
@@ -98,6 +21,7 @@ mod testing {
         // The `INIT: Once` will "lock" this part of the function so its logic can only ever be run once
         // This is needed to do setup that each test needs, running it multiple times causes a panic
         INIT.call_once(|| {
+            // Create a fake client so we can test http commands
             FAKE_CLIENT
                 .set(FakeClient::new("http://127.0.0.1:5000"))
                 .unwrap();
@@ -116,10 +40,13 @@ mod testing {
             .unwrap_or_else(|_e| panic!("Failed to parse a file into an AST"))
     }
 
-    fn results_from_filename(filename: &str) -> Vec<TestResult> {
+    fn results_from_filename(filename: &str) -> (Vec<TestResult>, TestWriter, TestWriter) {
         initialize();
         let ast = read_cs_file(filename);
-        run_functions(ast, OsStr::new(filename))
+        let mut std_out = TestWriter::new();
+        let mut std_err = TestWriter::new();
+        let test_results = run_functions(&mut std_out, &mut std_err, ast, OsStr::new(filename));
+        (test_results, std_out, std_err)
     }
 
     fn assert_test_pass(result: &TestResult, filename: &str, while_doing: &str) {
@@ -214,7 +141,9 @@ mod testing {
         let filename = "simplest_test.chs";
         let ast = read_cs_file(filename);
         assert_eq!(ast.functions.len(), 1, "Should only get a single test for a test file which contains one test case but got multiple");
-        let res = run_functions(ast, OsStr::new(filename));
+        let mut std_out = TestWriter::new();
+        let mut std_err = TestWriter::new();
+        let res = run_functions(&mut std_out, &mut std_err, ast, OsStr::new(filename));
         assert_eq!(
             res.len(),
             1,
@@ -234,7 +163,7 @@ mod testing {
     /// Test that each Literal variant works for assignment and assertion checking
     fn literals() {
         let filename = "literals.chs";
-        let res = results_from_filename(filename);
+        let res = results_from_filename(filename).0;
         assert_eq!(
             res.len(),
             2,
@@ -256,7 +185,7 @@ mod testing {
     /// Test formatted strings and strings with special characters
     fn user_strings() {
         let filename = "strings.chs";
-        let res = results_from_filename(filename);
+        let res = results_from_filename(filename).0;
         assert_eq!(
             res.len(),
             2,
@@ -275,7 +204,7 @@ mod testing {
     /// and that a test can be expected to fail and not have its failure count towards failing
     fn logical_inversion() {
         let filename = "test_negation.chs";
-        let res = results_from_filename(filename);
+        let res = results_from_filename(filename).0;
         assert_eq!(
             res.len(),
             3,
@@ -298,7 +227,7 @@ mod testing {
     /// Test that failed assertions result in a test being marked as failing
     fn failing_tests() {
         let filename = "failing_test.chs";
-        let res = results_from_filename(filename);
+        let res = results_from_filename(filename).0;
         assert_eq!(
             res.len(),
             5,
@@ -342,7 +271,7 @@ mod testing {
     /// Test that test-cases can be nested
     fn nested_tests() {
         let filename = "nested.chs";
-        let res = results_from_filename(filename);
+        let res = results_from_filename(filename).0;
         assert_eq!(res.len(), 2, "Expected to get 2 test results when running {} which has two outermost tests which both contain nested tests", filename);
 
         // First outer test verifies that deeply nested tests pass
@@ -384,7 +313,7 @@ mod testing {
     /// Test that test-cases can make web requests
     fn web_requests() {
         let filename = "web_request.chs";
-        let res = results_from_filename(filename);
+        let res = results_from_filename(filename).0;
         assert_eq!(res.len(), 8);
 
         // Test GET
@@ -452,7 +381,8 @@ mod testing {
     /// Test runtime errors
     fn runtime_errors() {
         let filename = "runtime_errors.chs";
-        let res = results_from_filename(filename);
+        let (res, _std_out, std_err) = results_from_filename(filename);
+        let std_err_lines = std_err.str_lines();
         assert_eq!(res.len(), 7);
 
         // Non-existent var
@@ -462,6 +392,10 @@ mod testing {
             "when using a non-existent variable",
             ChimeraRuntimeFailure::VarNotFound("".to_owned(), 0),
         );
+        assert_eq!(
+            std_err_lines[0].trim(),
+            "ERROR on line 0: var 'foobar' was accessed but is not set"
+        );
 
         // Bad subfield access
         assert_test_fail(
@@ -469,6 +403,10 @@ mod testing {
             filename,
             "when making a bad subfield access",
             ChimeraRuntimeFailure::BadSubfieldAccess(None, "".to_owned(), 0),
+        );
+        assert_eq!(
+            std_err_lines[1].trim(),
+            "ERROR on line 1: Failed to access subfield 'test' for variable 'res_with_query_param'"
         );
 
         // Wrong type
@@ -478,6 +416,10 @@ mod testing {
             "when using a GT assertion on a non-numeric type",
             ChimeraRuntimeFailure::VarWrongType("".to_owned(), VarTypes::Number, 0),
         );
+        assert_eq!(
+            std_err_lines[2].trim(),
+            "ERROR on line 0: value 'foo' was expected to be of type Number but it was not"
+        );
 
         // Index a list with an out-of-bounds value
         assert_test_fail(
@@ -485,6 +427,10 @@ mod testing {
             filename,
             "when accessing a list with an out of bounds value",
             ChimeraRuntimeFailure::OutOfBounds(0),
+        );
+        assert_eq!(
+            std_err_lines[3].trim(),
+            "ERROR on line 1: Tried to access an array with an out-of-bounds value"
         );
 
         // Index a list with a non-existent subfield and a non number
@@ -494,11 +440,19 @@ mod testing {
             "when accessing a list via a non-existent subfield",
             ChimeraRuntimeFailure::TriedToIndexWithNonNumber(0),
         );
+        assert_eq!(
+            std_err_lines[4].trim(),
+            "ERROR on line 1: Arrays can only be indexed with an unsigned integer"
+        );
         assert_test_fail(
             &res[5],
             filename,
             "when accessing a list with a non-numerical index",
             ChimeraRuntimeFailure::TriedToIndexWithNonNumber(0),
+        );
+        assert_eq!(
+            std_err_lines[5].trim(),
+            "ERROR on line 1: Arrays can only be indexed with an unsigned integer"
         );
 
         // Use an invalid http header
@@ -508,19 +462,50 @@ mod testing {
             "when making an http request with an invalid header",
             ChimeraRuntimeFailure::InvalidHeader(0, "".to_owned()),
         );
+        assert_eq!(
+            std_err_lines[6].trim(),
+            "ERROR on line 0: Header 'Foobar' is not valid"
+        );
     }
 
     #[test]
     /// Test that the print command causes no errors
     fn print_command() {
-        // This test is not complete, it just checks that the print command causes no failures.
-        // Actually testing what it does involves re-directing the project writer from std
-        // output. This seems to require a mutable static reference, which then requires
-        // an unsafe block both here and in our write method which is not great
+        // TODO: Use the "golden test" pattern here
+        //       Basically, have a .stdout and .stderr file alongside my print.chs file. Capture
+        //       the output of print.chs and just compare it to the expected values in .stdout and
+        //       .stderr, rather than doing a line-by-line assertion
         let filename = "print.chs";
-        let res = results_from_filename(filename);
+        let (res, std_write, _err_write) = results_from_filename(filename);
         assert_eq!(res.len(), 1);
         assert_test_pass(&res[0], filename, "when printing a literal and a variable");
+        let lines = std_write.str_lines();
+        assert_eq!(lines[0].trim(), "RUNNING FILE print.chs");
+        assert_eq!(lines[1].trim(), "STARTING TEST - print_case");
+        assert_eq!(
+            lines[2].trim(),
+            "Hello world",
+            "when using the PRINT command to print 'Hello world'"
+        );
+        assert_eq!(
+            lines[3].trim(),
+            "5",
+            "when using the PRINT command to print a numerical '5'"
+        );
+        assert_eq!(
+            lines[4].trim(),
+            "test test test",
+            "when using the PRINT command to print a formatted string using one variable"
+        );
+        assert_eq!(
+            lines[5].trim(),
+            "test test test test",
+            "when using the PRINT command to print a formatted string using two variables"
+        );
+        // Cannot assert_eq on entire FINISHED TEST line as it contains the length of time used to
+        // run the test, which will not be constant
+        assert!(lines[6].trim().contains("FINISHED TEST - print_case -"));
+        assert!(lines[6].trim().contains("- SUCCESS"));
     }
 
     #[test]
@@ -528,7 +513,7 @@ mod testing {
     /// list, accessing the list, appending to a list, removing from a list, and printing a list
     fn list_command() {
         let filename = "list.chs";
-        let res = results_from_filename(filename);
+        let res = results_from_filename(filename).0;
         assert_eq!(res.len(), 6);
 
         // Test general list functionality
@@ -627,7 +612,7 @@ mod testing {
     /// made from the LITERAL command, should work in lists, and should be comparable for equality and ordering
     fn number_kinds() {
         let filename = "numberkinds.chs";
-        let res = results_from_filename(filename);
+        let res = results_from_filename(filename).0;
         assert_eq!(res.len(), 2);
         assert_test_pass(
             &res[0],
@@ -645,7 +630,7 @@ mod testing {
     /// Test that comments can be included in test script
     fn comments() {
         let filename = "comments.chs";
-        let res = results_from_filename(filename);
+        let res = results_from_filename(filename).0;
         assert_eq!(res.len(), 1);
         assert_test_pass(
             &res[0],
@@ -656,6 +641,4 @@ mod testing {
 
     // TODO: Test for get_result_counts. Test something with multiple outer cases, nested tests, passes, errors, and failures
     //       Make sure some nested cases are reached and others are not (they are nested after a failure of parent)
-
-    // TODO: Test for error messages when a test fails
 }
