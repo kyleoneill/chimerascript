@@ -923,8 +923,8 @@ impl Value {
                         Self::Variable(var_name) => {
                             let resolved = Self::get_from_var_map(context, var_name, variable_map)?;
                             let binding = resolved.borrow(context)?;
-                            let as_str = binding.try_into_string(var_name.clone(), context)?;
-                            built_str.push_str(as_str);
+                            let as_string = binding.to_string();
+                            built_str.push_str(as_string.as_str());
                         },
                         Self::FormattedString(_) => return Err(ChimeraRuntimeFailure::InternalError("building a formatted string, got a formatted string inside a formatted string".to_owned()))
                     }
