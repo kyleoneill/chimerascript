@@ -227,11 +227,11 @@ mod testing {
     /// Test that failed assertions result in a test being marked as failing
     fn failing_tests() {
         let filename = "failing_test.chs";
-        let res = results_from_filename(filename).0;
+        let (res, _std_write, err_write) = results_from_filename(filename);
         assert_eq!(
             res.len(),
-            5,
-            "Expected to get 5 test results when running {} which has 5 outermost test cases",
+            7,
+            "Expected to get 7 test results when running {} which has 7 outermost test cases",
             filename
         );
         assert_eq!(res[0].subtest_results.len(), 0, "Test case {} of file {} should have no subtest_results even though it has a nested test case, as it should have failed before reaching the nested case", res[0].test_name(), filename);
@@ -264,6 +264,28 @@ mod testing {
             filename,
             "on a bad LT assertion",
             ChimeraRuntimeFailure::TestFailure("".to_owned(), 0),
+        );
+        assert_test_fail(
+            &res[5],
+            filename,
+            "when failing with a string custom error message",
+            ChimeraRuntimeFailure::TestFailure("".to_owned(), 0),
+        );
+        assert_test_fail(
+            &res[6],
+            filename,
+            "when failing with a formatted string custom error message",
+            ChimeraRuntimeFailure::TestFailure("".to_owned(), 0),
+        );
+
+        let lines = err_write.str_lines();
+        assert_eq!(
+            lines[5].trim(),
+            "FAILURE on line 0: Custom error message - Expected value 1 to equal value '2'"
+        );
+        assert_eq!(
+            lines[6].trim(),
+            "FAILURE on line 1: Expected 1 to equal 2 - Expected value 1 to equal value '2'"
         );
     }
 

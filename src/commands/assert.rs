@@ -82,23 +82,30 @@ pub fn assert_command(
             format!("formatted string with value '{:?}'", formatted_string)
         }
     };
-    if assert_command.negate_assertion && assertion_passed {
-        // Assertion was true but expected to be false
+
+    // If the assertion passed when it was expected to fail OR if the assertion failed when
+    // it was expected to pass, then we return a test failure
+    if (assert_command.negate_assertion && assertion_passed)
+        || (!assert_command.negate_assertion && !assertion_passed)
+    {
+        let custom_error_message = match &assert_command.error_message {
+            Some(error_msg_val) => {
+                let resolved = error_msg_val.resolve(context, variable_map)?;
+                let binding = resolved.borrow(context)?;
+                binding.to_string()
+            }
+            None => "".to_owned(),
+        };
+        let to_be_or_not_to_be = match assert_command.negate_assertion {
+            true => "to not",
+            false => "to",
+        };
         return Err(ChimeraRuntimeFailure::TestFailure(
             format!(
-                "Expected {} to not {} {}",
+                "{} - Expected {} {} {} {}",
+                custom_error_message,
                 left_val_error_message,
-                assert_command.subcommand,
-                assert_command.right_value.error_print()
-            ),
-            context.current_line,
-        ));
-    } else if !assert_command.negate_assertion && !assertion_passed {
-        // Assertion was false but expected to be true
-        return Err(ChimeraRuntimeFailure::TestFailure(
-            format!(
-                "Expected {} to {} {}",
-                left_val_error_message,
+                to_be_or_not_to_be,
                 assert_command.subcommand,
                 assert_command.right_value.error_print()
             ),
