@@ -4,14 +4,12 @@ use crate::abstract_syntax_tree::{
 use crate::err_handle::{ChimeraRuntimeFailure, VarTypes};
 use crate::frontend::Context;
 use crate::literal::{Collection, Data, DataKind, Literal, NumberKind};
-use crate::variable_map::VariableMap;
 use crate::CLIENT;
 use std::ops::{Deref, DerefMut};
 
 pub fn expression_command(
     context: &Context,
     expression: Expression,
-    variable_map: &VariableMap,
 ) -> Result<Data, ChimeraRuntimeFailure> {
     match expression {
         Expression::Literal(literal) => Ok(Data::from_literal(literal)),
@@ -19,7 +17,7 @@ pub fn expression_command(
             let client = CLIENT
                 .get()
                 .expect("Failed to get web client while resolving an http command");
-            let res_obj = client.make_request(context, http_command, variable_map)?;
+            let res_obj = client.make_request(context, http_command)?;
             Ok(Data::new(res_obj))
         }
         Expression::List(list_expression) => {
@@ -27,7 +25,7 @@ pub fn expression_command(
                 ListExpression::New(new_list) => {
                     let mut list: Vec<Data> = Vec::new();
                     for value in new_list {
-                        let literal_val = value.resolve(context, variable_map)?;
+                        let literal_val = value.resolve(context)?;
                         list.push(literal_val);
                     }
                     Ok(Data::from_vec(list))
@@ -35,6 +33,7 @@ pub fn expression_command(
                 ListExpression::ListArgument(list_command) => {
                     match list_command.operation {
                         ListCommandOperations::MutateOperations(ref mutable_operation) => {
+                            let variable_map = context.get_var_map();
                             match variable_map
                                 .get_mut(context, list_command.list_name.as_str())?
                                 .deref_mut()
@@ -44,14 +43,14 @@ pub fn expression_command(
                                     // rather than actually copying the data
                                     match mutable_operation {
                                         MutateListOperations::Append(append_val) => {
-                                            let data = append_val.resolve(context, variable_map)?;
+                                            let data = append_val.resolve(context)?;
                                             mutable_list.push(data.clone());
                                             Ok(data)
                                         }
                                         MutateListOperations::Remove(remove_val) => {
                                             let index = match remove_val
-                                                .resolve(context, variable_map)?
-                                                .borrow(context)?
+                                                .resolve(context)?
+                                                .borrow()?
                                                 .deref()
                                                 .try_into_usize(remove_val, context) {
                                                 Ok(i) => i,
@@ -84,9 +83,10 @@ pub fn expression_command(
                             }
                         }
                         ListCommandOperations::Length => {
+                            let variable_map = context.get_var_map();
                             let length = variable_map
                                 .get(context, list_command.list_name.as_str())?
-                                .borrow(context)?
+                                .borrow()?
                                 .deref()
                                 .try_into_list(list_command.list_name.clone(), context)?
                                 .len();
@@ -111,8 +111,8 @@ pub fn expression_command(
                         }
                     },
                     Value::Variable(ref _var_name) => {
-                        let resolved = value.resolve(context, variable_map)?;
-                        let binding = resolved.borrow(context)?;
+                        let resolved = value.resolve(context)?;
+                        let binding = resolved.borrow()?;
                         built_str.push_str(binding.to_string().as_str());
                     }
                     Value::FormattedString(_) => {

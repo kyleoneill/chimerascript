@@ -130,7 +130,7 @@ impl NumberKind {
     ) -> Result<usize, ChimeraRuntimeFailure> {
         self.to_usize().ok_or_else(|| {
             ChimeraRuntimeFailure::VarWrongType(
-                came_from.error_print(),
+                came_from.error_print(context),
                 VarTypes::Unsigned,
                 context.current_line,
             )
@@ -170,7 +170,7 @@ impl Data {
             handle: Rc::new(RefCell::new(DataKind::Collection(Collection::List(v)))),
         }
     }
-    pub fn borrow(&self, context: &Context) -> Result<Ref<DataKind>, ChimeraRuntimeFailure> {
+    pub fn borrow(&self) -> Result<Ref<DataKind>, ChimeraRuntimeFailure> {
         match self.handle.try_borrow() {
             // Must return a Ref<T> here, returning a Ref<T>::deref() will error.
             // This happens because RefCell<T>::try_borrow returns a Ref<T> with the lifetime of the &self passed into
@@ -179,16 +179,14 @@ impl Data {
             // returned, because the caller gave us &self and knows what the lifetime is.
             Ok(d) => Ok(d),
             Err(_) => Err(ChimeraRuntimeFailure::BorrowError(
-                context.current_line,
                 "Cannot borrow a variable when it has a mutable reference in use".to_owned(),
             )),
         }
     }
-    pub fn borrow_mut(&self, context: &Context) -> Result<RefMut<DataKind>, ChimeraRuntimeFailure> {
+    pub fn borrow_mut(&self) -> Result<RefMut<DataKind>, ChimeraRuntimeFailure> {
         match self.handle.try_borrow_mut() {
             Ok(d) => Ok(d),
             Err(_) => Err(ChimeraRuntimeFailure::BorrowError(
-                context.current_line,
                 "Cannot borrow a variable mutably when it already has a reference in use"
                     .to_owned(),
             )),
@@ -220,7 +218,7 @@ impl Data {
             Some(a) => a,
             None => return Ok(self.clone()),
         };
-        let borrow = self.borrow(context)?;
+        let borrow = self.borrow()?;
         match borrow.deref() {
             DataKind::Collection(c) => match c {
                 Collection::Object(obj) => match obj.get(accessor) {
@@ -311,7 +309,7 @@ impl DataKind {
         match self {
             Self::Literal(literal) => Ok(literal),
             Self::Collection(_) => Err(ChimeraRuntimeFailure::VarWrongType(
-                came_from.error_print(),
+                came_from.error_print(context),
                 VarTypes::Literal,
                 context.current_line,
             )),
@@ -324,7 +322,7 @@ impl DataKind {
     ) -> Result<NumberKind, ChimeraRuntimeFailure> {
         self.to_number().ok_or_else(|| {
             ChimeraRuntimeFailure::VarWrongType(
-                came_from.error_print(),
+                came_from.error_print(context),
                 VarTypes::Number,
                 context.current_line,
             )
@@ -347,7 +345,7 @@ impl DataKind {
             return Ok(unsigned);
         };
         Err(ChimeraRuntimeFailure::VarWrongType(
-            came_from.error_print(),
+            came_from.error_print(context),
             VarTypes::Unsigned,
             context.current_line,
         ))
@@ -388,9 +386,6 @@ pub enum Collection {
 
 impl PartialEq for Collection {
     fn eq(&self, other: &Self) -> bool {
-        // TODO: https://github.com/kyleoneill/chimerascript/issues/33
-        // borrow() should not need to take context
-        let fake_context = Context { current_line: 0 };
         match self {
             Self::Object(self_obj) => match other {
                 Self::Object(other_obj) => {
@@ -399,11 +394,9 @@ impl PartialEq for Collection {
                     };
                     self_obj.iter().all(|(key, value)| {
                         other_obj.get(key).map_or(false, |v| {
-                            v.borrow(&fake_context)
-                                .expect("Failed to borrow object member")
-                                .deref()
+                            v.borrow().expect("Failed to borrow object member").deref()
                                 == value
-                                    .borrow(&fake_context)
+                                    .borrow()
                                     .expect("Failed to borrow object member")
                                     .deref()
                         })
@@ -418,11 +411,11 @@ impl PartialEq for Collection {
                     };
                     (0..self_list.len()).all(|i| {
                         self_list[i]
-                            .borrow(&fake_context)
+                            .borrow()
                             .expect("Failed to borrow list member")
                             .deref()
                             == other_list[i]
-                                .borrow(&fake_context)
+                                .borrow()
                                 .expect("Failed to borrow list member")
                                 .deref()
                     })
@@ -435,13 +428,10 @@ impl PartialEq for Collection {
 
 impl Display for Collection {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        // TODO: https://github.com/kyleoneill/chimerascript/issues/33
-        // borrow() should not need to take context
-        let fake_context = Context { current_line: 0 };
         match self {
             Collection::Object(object) => {
                 for (key, val) in object.iter() {
-                    let val_string = match val.borrow(&fake_context) {
+                    let val_string = match val.borrow() {
                         Ok(borrowed) => borrowed.to_string(),
                         Err(_) => return Err(std::fmt::Error),
                     };
@@ -453,7 +443,7 @@ impl Display for Collection {
                 // TODO: Should not be doing unwrap here, get rid of fake_context
                 let list_as_str = list
                     .iter()
-                    .map(|c| c.borrow(&fake_context).unwrap().to_string())
+                    .map(|c| c.borrow().unwrap().to_string())
                     .collect::<Vec<String>>()
                     .join(", ");
                 write!(f, "[{}]", list_as_str)
@@ -477,7 +467,7 @@ impl Collection {
         match self {
             Collection::List(list) => {
                 let borrowed_list_values: Result<Vec<_>, ChimeraRuntimeFailure> =
-                    list.iter().map(|x| x.borrow(context)).collect();
+                    list.iter().map(|x| x.borrow()).collect();
                 let rhs = contains_data.deref();
                 let res = borrowed_list_values?
                     .into_iter()

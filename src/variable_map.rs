@@ -57,7 +57,7 @@ impl VariableMap {
         key: &str,
     ) -> Result<RefMut<DataKind>, ChimeraRuntimeFailure> {
         match self.map.get(key) {
-            Some(var_value) => var_value.borrow_mut(context),
+            Some(var_value) => var_value.borrow_mut(),
             None => Err(ChimeraRuntimeFailure::VarNotFound(
                 key.to_owned(),
                 context.current_line,

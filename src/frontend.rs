@@ -1,5 +1,6 @@
 use crate::abstract_syntax_tree::{BlockContents, ChimeraScriptAST, Function, Statement};
 use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure};
+use crate::literal::Data;
 use crate::util::timer::Timer;
 use crate::variable_map::VariableMap;
 use pest::iterators::Pairs;
@@ -10,13 +11,24 @@ use std::fmt::{Display, Formatter};
 use std::io::Write;
 use std::iter::Sum;
 
-pub struct Context {
+pub struct Context<'a> {
     pub current_line: i32,
+    variable_map: &'a mut VariableMap,
 }
 
-impl Context {
-    pub fn new() -> Self {
-        Self { current_line: 0 }
+impl<'a> Context<'a> {
+    pub fn new(variable_map: &'a mut VariableMap) -> Context<'a> {
+        Self {
+            current_line: 0,
+            variable_map,
+        }
+    }
+    pub fn get_var_map(&self) -> &VariableMap {
+        // Re-borrow as a shared immutable reference
+        &*self.variable_map
+    }
+    pub fn store_data(&mut self, var_name: String, data: Data) {
+        self.variable_map.insert(var_name, data);
     }
 }
 
@@ -283,7 +295,7 @@ pub fn run_test_function<S: Write, E: Write>(
 ) -> TestResult {
     print_in_function(writer, &format!("STARTING TEST - {}", function.name), depth);
     let timer = Timer::new();
-    let mut context = Context::new();
+    let mut context = Context::new(variable_map);
     // TODO: If the ability to call functions is added (like calling an init function) the teardown stack needs to be
     //       passed as a mut reference into that function so it can add teardown to the stack. Should only be able
     //       to call non-test functions with no parents?
@@ -302,7 +314,7 @@ pub fn run_test_function<S: Write, E: Write>(
                 writer,
                 err_writer,
                 nested_function,
-                variable_map,
+                context.variable_map,
                 depth + 1,
             )),
             BlockContents::Teardown(mut teardown_block) => {
@@ -317,33 +329,17 @@ pub fn run_test_function<S: Write, E: Write>(
                 // If we have any other runtime error, just return the error
                 let statement_result = match statement {
                     Statement::AssertCommand(assert_command) => {
-                        crate::commands::assert::assert_command(
-                            &context,
-                            &assert_command,
-                            variable_map,
-                        )
+                        crate::commands::assert::assert_command(&context, &assert_command)
                     }
                     Statement::AssignmentExpr(assert_expr) => {
-                        crate::commands::assignment::assignment_command(
-                            &context,
-                            assert_expr,
-                            variable_map,
-                        )
+                        crate::commands::assignment::assignment_command(&mut context, assert_expr)
                     }
-                    Statement::PrintCommand(print_cmd) => crate::commands::print::print_command(
-                        &context,
-                        writer,
-                        print_cmd,
-                        variable_map,
-                        depth,
-                    ),
+                    Statement::PrintCommand(print_cmd) => {
+                        crate::commands::print::print_command(&context, writer, print_cmd, depth)
+                    }
                     Statement::Expression(expr) => {
                         // We are running an expression without assigning it, we can toss the result
-                        match crate::commands::expression::expression_command(
-                            &context,
-                            expr,
-                            variable_map,
-                        ) {
+                        match crate::commands::expression::expression_command(&context, expr) {
                             Ok(_) => Ok(()),
                             Err(e) => Err(e),
                         }

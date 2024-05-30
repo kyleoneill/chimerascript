@@ -1,23 +1,22 @@
-use crate::abstract_syntax_tree::{AssertCommand, AssertSubCommand, Value};
+use crate::abstract_syntax_tree::{AssertCommand, AssertSubCommand};
 use crate::err_handle::{ChimeraRuntimeFailure, VarTypes};
 use crate::frontend::Context;
 use crate::literal::{Collection, DataKind};
-use crate::variable_map::VariableMap;
 use std::ops::Deref;
 
 pub fn assert_command(
     context: &Context,
     assert_command: &AssertCommand,
-    variable_map: &VariableMap,
 ) -> Result<(), ChimeraRuntimeFailure> {
-    let left_binding = assert_command.left_value.resolve(context, variable_map)?;
-    let left_data = left_binding.borrow(context)?;
-    let right_binding = assert_command.right_value.resolve(context, variable_map)?;
-    let right_data = right_binding.borrow(context)?;
+    let left_binding = assert_command.left_value.resolve(context)?;
+    let left_data = left_binding.borrow()?;
+    let right_binding = assert_command.right_value.resolve(context)?;
+    let right_data = right_binding.borrow()?;
     let assertion_passed = match assert_command.subcommand {
         AssertSubCommand::Length => {
             let assert_len = right_data.try_into_usize(&assert_command.right_value, context)?;
-            let vec = left_data.try_into_list(assert_command.left_value.error_print(), context)?;
+            let vec =
+                left_data.try_into_list(assert_command.left_value.error_print(context), context)?;
             vec.len() == assert_len
         }
         AssertSubCommand::Equals => left_data.deref() == right_data.deref(),
@@ -28,7 +27,7 @@ pub fn assert_command(
                         let expected_code =
                             right_data.try_into_u64(&assert_command.right_value, context)?;
                         let status_as_num = status_code
-                            .borrow(context)?
+                            .borrow()?
                             .deref()
                             .try_into_u64(&assert_command.left_value, context)?;
                         Some(expected_code == status_as_num)
@@ -41,7 +40,7 @@ pub fn assert_command(
                 Some(b) => b,
                 None => {
                     return Err(ChimeraRuntimeFailure::VarWrongType(
-                        assert_command.left_value.error_print(),
+                        assert_command.left_value.error_print(context),
                         VarTypes::HttpResponse,
                         context.current_line,
                     ))
@@ -52,7 +51,7 @@ pub fn assert_command(
             DataKind::Collection(c) => c.contains(right_data, context)?,
             _ => {
                 return Err(ChimeraRuntimeFailure::VarWrongType(
-                    assert_command.left_value.error_print(),
+                    assert_command.left_value.error_print(context),
                     VarTypes::Containable,
                     context.current_line,
                 ))
@@ -73,16 +72,6 @@ pub fn assert_command(
             }
         }
     };
-    let left_val_error_message = match &assert_command.left_value {
-        Value::Literal(literal_val) => format!("value {}", literal_val),
-        Value::Variable(var_name) => {
-            format!("var '{}' with value '{}'", var_name, left_data.deref())
-        }
-        Value::FormattedString(formatted_string) => {
-            format!("formatted string with value '{:?}'", formatted_string)
-        }
-    };
-
     // If the assertion passed when it was expected to fail OR if the assertion failed when
     // it was expected to pass, then we return a test failure
     if (assert_command.negate_assertion && assertion_passed)
@@ -90,9 +79,9 @@ pub fn assert_command(
     {
         let custom_error_message = match &assert_command.error_message {
             Some(error_msg_val) => {
-                let resolved = error_msg_val.resolve(context, variable_map)?;
-                let binding = resolved.borrow(context)?;
-                binding.to_string()
+                let resolved = error_msg_val.resolve(context)?;
+                let binding = resolved.borrow()?;
+                format!("{} - ", binding)
             }
             None => "".to_owned(),
         };
@@ -102,12 +91,12 @@ pub fn assert_command(
         };
         return Err(ChimeraRuntimeFailure::TestFailure(
             format!(
-                "{} - Expected {} {} {} {}",
+                "{}Expected {} {} {} {}",
                 custom_error_message,
-                left_val_error_message,
+                assert_command.left_value.error_print(context),
                 to_be_or_not_to_be,
                 assert_command.subcommand,
-                assert_command.right_value.error_print()
+                assert_command.right_value.error_print(context)
             ),
             context.current_line,
         ));

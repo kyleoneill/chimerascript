@@ -230,8 +230,8 @@ mod testing {
         let (res, _std_write, err_write) = results_from_filename(filename);
         assert_eq!(
             res.len(),
-            7,
-            "Expected to get 7 test results when running {} which has 7 outermost test cases",
+            8,
+            "Expected to get 8 test results when running {} which has 8 outermost test cases",
             filename
         );
         assert_eq!(res[0].subtest_results.len(), 0, "Test case {} of file {} should have no subtest_results even though it has a nested test case, as it should have failed before reaching the nested case", res[0].test_name(), filename);
@@ -281,12 +281,16 @@ mod testing {
         let lines = err_write.str_lines();
         assert_eq!(
             lines[5].trim(),
-            "FAILURE on line 0: Custom error message - Expected value 1 to equal value '2'"
+            "FAILURE on line 0: Custom error message - Expected value '1' to equal value '2'"
         );
         assert_eq!(
             lines[6].trim(),
-            "FAILURE on line 1: Expected 1 to equal 2 - Expected value 1 to equal value '2'"
+            "FAILURE on line 1: Expected 1 to equal 2 - Expected value '1' to equal value '2'"
         );
+        assert_eq!(
+            lines[7].trim(),
+            "FAILURE on line 1: Expected value 'foo' to equal formatted string 'thing 'hello''"
+        )
     }
 
     #[test]

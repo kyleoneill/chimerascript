@@ -82,7 +82,7 @@ pub enum ChimeraRuntimeFailure {
     BadSubfieldAccess(Option<String>, String, i32),
     TriedToIndexWithNonNumber(i32),
     OutOfBounds(i32),
-    BorrowError(i32, String),
+    BorrowError(String),
     InvalidHeader(i32, String),
 }
 
@@ -139,8 +139,8 @@ impl Display for ChimeraRuntimeFailure {
                 "ERROR on line {}: Tried to access an array with an out-of-bounds value",
                 line
             ),
-            ChimeraRuntimeFailure::BorrowError(line, reason) => {
-                write!(f, "ERROR on line {}: {}", line, reason)
+            ChimeraRuntimeFailure::BorrowError(reason) => {
+                write!(f, "ERROR: {}", reason)
             }
             ChimeraRuntimeFailure::InvalidHeader(line, header) => write!(
                 f,
@@ -178,8 +178,8 @@ impl PartialEq for ChimeraRuntimeFailure {
             ChimeraRuntimeFailure::OutOfBounds(_) => {
                 matches!(other, ChimeraRuntimeFailure::OutOfBounds(_))
             }
-            ChimeraRuntimeFailure::BorrowError(_, _) => {
-                matches!(other, ChimeraRuntimeFailure::BorrowError(_, _))
+            ChimeraRuntimeFailure::BorrowError(_) => {
+                matches!(other, ChimeraRuntimeFailure::BorrowError(_))
             }
             ChimeraRuntimeFailure::InvalidHeader(_, _) => {
                 matches!(other, ChimeraRuntimeFailure::InvalidHeader(_, _))
@@ -205,7 +205,7 @@ impl ChimeraRuntimeFailure {
             ChimeraRuntimeFailure::BadSubfieldAccess(_, _, _) => "BadSubfieldAccess",
             ChimeraRuntimeFailure::TriedToIndexWithNonNumber(_) => "TriedToIndexWithNonNumber",
             ChimeraRuntimeFailure::OutOfBounds(_) => "OutOfBounds",
-            ChimeraRuntimeFailure::BorrowError(_, _) => "BorrowError",
+            ChimeraRuntimeFailure::BorrowError(_) => "BorrowError",
             ChimeraRuntimeFailure::InvalidHeader(_, _) => "InvalidHeader",
         }
     }
