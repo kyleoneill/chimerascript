@@ -901,7 +901,8 @@ impl Value {
             Value::Literal(literal) => format!("value '{}'", literal),
             Value::Variable(var_name) => format!("var '{}'", var_name.to_owned()),
             Value::FormattedString(_) => {
-                // Don't want to return a string here as it will result in an error message like
+                // If the resolve here fails, we don't want to swap out the error string for an
+                // "internal error" message as it will result in an error message like
                 // "Expected 'foo' to equal 'Internal error'". This is a bad state that should
                 // not occur, so we will panic
                 let resolved = self
