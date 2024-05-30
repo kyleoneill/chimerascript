@@ -2,7 +2,6 @@ use crate::abstract_syntax_tree::{HTTPVerb, HttpCommand};
 use crate::err_handle::ChimeraRuntimeFailure;
 use crate::frontend::Context;
 use crate::literal::{Collection, Data, DataKind, Literal, NumberKind};
-use crate::variable_map::VariableMap;
 use reqwest;
 use std::collections::HashMap;
 
@@ -12,7 +11,6 @@ pub trait WebClient {
         &self,
         context: &Context,
         http_command: HttpCommand,
-        variable_map: &VariableMap,
     ) -> Result<DataKind, ChimeraRuntimeFailure>;
 }
 
@@ -36,11 +34,10 @@ impl WebClient for RealClient {
         &self,
         context: &Context,
         http_command: HttpCommand,
-        variable_map: &VariableMap,
     ) -> Result<DataKind, ChimeraRuntimeFailure> {
-        let resolved_path = http_command.resolve_path(context, variable_map)?;
-        let body_map = http_command.resolve_body(context, variable_map)?;
-        let headers = http_command.resolve_header(context, variable_map)?;
+        let resolved_path = http_command.resolve_path(context)?;
+        let body_map = http_command.resolve_body(context)?;
+        let headers = http_command.resolve_header(context)?;
 
         // Make the web request
         let res = match http_command.verb {

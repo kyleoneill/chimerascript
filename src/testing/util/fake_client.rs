@@ -3,7 +3,6 @@ use crate::err_handle::ChimeraRuntimeFailure;
 use crate::frontend::Context;
 use crate::literal::{Collection, Data, DataKind, Literal, NumberKind};
 use crate::util::client::WebClient;
-use crate::variable_map::VariableMap;
 use std::collections::HashMap;
 
 #[derive(Debug)]
@@ -27,7 +26,6 @@ impl WebClient for FakeClient {
         &self,
         context: &Context,
         http_command: HttpCommand,
-        variable_map: &VariableMap,
     ) -> Result<DataKind, ChimeraRuntimeFailure> {
         let mut response_obj: HashMap<String, Data> = HashMap::new();
         response_obj.insert(
@@ -44,16 +42,16 @@ impl WebClient for FakeClient {
         let mut resolved_body: HashMap<String, Data> = HashMap::new();
         for assignment in &http_command.http_assignments {
             let key = assignment.lhs.clone();
-            let value = assignment.rhs.resolve(context, variable_map)?;
+            let value = assignment.rhs.resolve(context)?;
             resolved_body.insert(key, value);
         }
         let mut query_params: HashMap<String, Data> = HashMap::new();
         for query_param in &http_command.query_params {
             let key = query_param.lhs.clone();
-            let value = query_param.rhs.resolve(context, variable_map)?;
+            let value = query_param.rhs.resolve(context)?;
             query_params.insert(key, value);
         }
-        let raw_headers = &http_command.resolve_header(context, variable_map)?;
+        let raw_headers = &http_command.resolve_header(context)?;
         let mut headers: HashMap<String, Data> = HashMap::new();
         for (key, value) in raw_headers.iter() {
             let deserializable_value = format!("\"{}\"", value.to_str().unwrap());
@@ -63,7 +61,7 @@ impl WebClient for FakeClient {
 
         // Construct a response struct out of the request params
         let mut body_data: HashMap<String, Data> = HashMap::new();
-        let resolved_path = http_command.resolve_path(context, variable_map)?;
+        let resolved_path = http_command.resolve_path(context)?;
         body_data.insert(
             "path".to_owned(),
             Data::new(DataKind::Literal(Literal::String(resolved_path))),

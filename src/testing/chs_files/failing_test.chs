@@ -38,3 +38,9 @@ case failing_error_message_formatted_string() {
     var num = LITERAL 2;
     ASSERT EQUALS 1 2 "Expected 1 to equal (num)";
 }
+
+[test]
+case assert_on_formatted_string() {
+    var foo = LITERAL "hello";
+    ASSERT EQUALS "foo" "thing '(foo)'";
+}

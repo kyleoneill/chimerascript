@@ -1,7 +1,6 @@
 use crate::err_handle::{ChimeraCompileError, ChimeraRuntimeFailure, VarTypes};
 use crate::frontend::{Context, Rule};
 use crate::literal::{Data, DataKind, Literal, NumberKind};
-use crate::variable_map::VariableMap;
 use crate::{frontend, CLIENT};
 use pest::iterators::Pair;
 use reqwest::header::{HeaderMap, HeaderName};
@@ -897,32 +896,38 @@ impl std::fmt::Display for Value {
 }
 
 impl Value {
-    pub fn error_print(&self) -> String {
+    pub fn error_print(&self, context: &Context) -> String {
         match self {
             Value::Literal(literal) => format!("value '{}'", literal),
             Value::Variable(var_name) => format!("var '{}'", var_name.to_owned()),
-            Value::FormattedString(formatted_string) => format!("fmt_str '{:?}'", formatted_string),
+            Value::FormattedString(_) => {
+                // If the resolve here fails, we don't want to swap out the error string for an
+                // "internal error" message as it will result in an error message like
+                // "Expected 'foo' to equal 'Internal error'". This is a bad state that should
+                // not occur, so we will panic
+                let resolved = self
+                    .resolve(context)
+                    .expect("Internal error while resolving a formatted string");
+                let binding = resolved
+                    .borrow()
+                    .expect("Internal error while resolving a formatted string");
+                format!("formatted string '{}'", binding)
+            }
         }
     }
 
-    pub fn resolve(
-        &self,
-        context: &Context,
-        variable_map: &VariableMap,
-    ) -> Result<Data, ChimeraRuntimeFailure> {
+    pub fn resolve(&self, context: &Context) -> Result<Data, ChimeraRuntimeFailure> {
         match self {
             Value::Literal(val) => Ok(Data::from_literal(val.clone())),
-            Value::Variable(var_name) => {
-                Ok(Self::get_from_var_map(context, var_name, variable_map)?)
-            }
+            Value::Variable(var_name) => Ok(Self::get_from_var_map(context, var_name)?),
             Value::FormattedString(formatted_string) => {
                 let mut built_str: String = String::new();
                 for value in formatted_string {
                     match value {
                         Self::Literal(literal) => built_str.push_str(literal.to_string().as_str()),
                         Self::Variable(var_name) => {
-                            let resolved = Self::get_from_var_map(context, var_name, variable_map)?;
-                            let binding = resolved.borrow(context)?;
+                            let resolved = Self::get_from_var_map(context, var_name)?;
+                            let binding = resolved.borrow()?;
                             let as_string = binding.to_string();
                             built_str.push_str(as_string.as_str());
                         },
@@ -934,12 +939,9 @@ impl Value {
         }
     }
 
-    fn get_from_var_map(
-        context: &Context,
-        var_name: &str,
-        variable_map: &VariableMap,
-    ) -> Result<Data, ChimeraRuntimeFailure> {
+    fn get_from_var_map(context: &Context, var_name: &str) -> Result<Data, ChimeraRuntimeFailure> {
         let accessors: Vec<&str> = var_name.split('.').collect();
+        let variable_map = context.get_var_map();
         let value = variable_map.get(context, accessors[0])?;
         if accessors.len() == 1 {
             Ok(value.clone())
@@ -1002,25 +1004,17 @@ impl From<Statement> for HttpCommand {
 }
 
 impl HttpCommand {
-    pub fn resolve_path(
-        &self,
-        context: &Context,
-        variable_map: &VariableMap,
-    ) -> Result<String, ChimeraRuntimeFailure> {
+    pub fn resolve_path(&self, context: &Context) -> Result<String, ChimeraRuntimeFailure> {
         let client = CLIENT
             .get()
             .expect("Failed to get web client while resolving an HTTP expression");
         let mut resolved_path: String = client.get_domain().to_owned();
         for portion in &self.path {
-            match portion
-                .resolve(context, variable_map)?
-                .borrow(context)?
-                .deref()
-            {
+            match portion.resolve(context)?.borrow()?.deref() {
                 DataKind::Literal(literal) => resolved_path.push_str(literal.to_string().as_str()),
                 DataKind::Collection(_) => {
                     return Err(ChimeraRuntimeFailure::VarWrongType(
-                        portion.error_print(),
+                        portion.error_print(context),
                         VarTypes::Literal,
                         context.current_line,
                     ))
@@ -1035,8 +1029,8 @@ impl HttpCommand {
             } else {
                 resolved_path.push('&');
             }
-            let data = query_param.rhs.resolve(context, variable_map)?;
-            let borrowed_data = data.borrow(context)?;
+            let data = query_param.rhs.resolve(context)?;
+            let borrowed_data = data.borrow()?;
             // TODO: This currently allows for a collection var to be used here, is that actually what I want? Should this error?
             let formatted = format!("{}={}", query_param.lhs, borrowed_data);
             resolved_path.push_str(formatted.as_str());
@@ -1046,25 +1040,16 @@ impl HttpCommand {
     pub fn resolve_body(
         &self,
         context: &Context,
-        variable_map: &VariableMap,
     ) -> Result<HashMap<String, String>, ChimeraRuntimeFailure> {
         let mut body_map: HashMap<String, String> = HashMap::new();
         for assignment in &self.http_assignments {
             let key = assignment.lhs.clone();
-            let value = assignment
-                .rhs
-                .resolve(context, variable_map)?
-                .borrow(context)?
-                .to_string();
+            let value = assignment.rhs.resolve(context)?.borrow()?.to_string();
             body_map.insert(key, value);
         }
         Ok(body_map)
     }
-    pub fn resolve_header(
-        &self,
-        context: &Context,
-        variable_map: &VariableMap,
-    ) -> Result<HeaderMap, ChimeraRuntimeFailure> {
+    pub fn resolve_header(&self, context: &Context) -> Result<HeaderMap, ChimeraRuntimeFailure> {
         let mut headers: HeaderMap = HeaderMap::new();
         for pair in &self.headers {
             let header_name = match HeaderName::from_lowercase(pair.lhs.as_bytes()) {
@@ -1076,13 +1061,7 @@ impl HttpCommand {
                     ))
                 }
             };
-            let value = match pair
-                .rhs
-                .resolve(context, variable_map)?
-                .borrow(context)?
-                .to_string()
-                .parse()
-            {
+            let value = match pair.rhs.resolve(context)?.borrow()?.to_string().parse() {
                 Ok(val) => val,
                 Err(_) => {
                     return Err(ChimeraRuntimeFailure::InternalError(
