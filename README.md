@@ -170,7 +170,7 @@ case my-test() {
   ASSERT EQUALS 1 1; // This is a comment in an assertion
   ASSERT EQUALS 1 /* This comment is in the middle */ 1;
   /*
-     This comment spans multiple linnes
+     This comment spans multiple lines
   */
   ASSERT EQUALS 1 1;
 }
